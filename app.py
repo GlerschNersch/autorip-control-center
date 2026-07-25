@@ -76,7 +76,7 @@ config = load_config()
 
 # --- Global State ---
 state = {
-    "stage": "IDLE",            # IDLE, COUNTDOWN, RIPPING, ENCODING, TRANSFERRING, COMPLETE, ERROR
+    "stage": "IDLE",
     "status_message": "System Ready - Insert a disc to begin",
     "progress_pct": 0,
     "current_file": "",
@@ -96,12 +96,13 @@ state = {
     "nas_storage": {"free_gb": 0, "total_gb": 0, "used_pct": 0},
     "logs": [f"{time.strftime('[%H:%M:%S]')} System Ready - AutoRip Control Center Online"],
     "settings": {
-        "media_type": "tv",       # tv or movie
-        "format": "mp4",          # mp4 or mkv
-        "preset": "Auto",         # Auto, HQ 720p30 Surround, HQ 1080p30 Surround, Fast 1080p30
+        "media_type": "tv",
+        "format": "mp4",
+        "preset": "Auto",
         "min_length_sec": 600,
         "auto_eject": True,
         "auto_rename": True,
+        "include_episode_titles": True,
         "show_name": "TaleSpin",
         "movie_title": "Movie Title",
         "release_year": "1990",
@@ -109,6 +110,7 @@ state = {
         "start_episode": 1,
         "tv_destination": config["tv_destination"],
         "movie_destination": config["movie_destination"],
+        "discord_webhook_url": "",
         "plex_url": "",
         "plex_token": ""
     }
@@ -116,13 +118,6 @@ state = {
 
 process_lock = threading.Lock()
 countdown_cancel_event = threading.Event()
-
-def save_config():
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
-    except Exception as e:
-        print(f"Error saving config: {e}")
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -178,9 +173,47 @@ def fetch_media_artwork():
     except Exception:
         pass
 
+def fetch_episode_title(show_name, season_num, ep_num):
+    try:
+        url = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(show_name)}&embed=episodes"
+        req = urllib.request.urlopen(url, timeout=4)
+        data = json.loads(req.read().decode())
+        episodes = data.get("_embedded", {}).get("episodes", [])
+        for ep in episodes:
+            if ep.get("season") == int(season_num) and ep.get("number") == int(ep_num):
+                name = ep.get("name", "")
+                for char in r'/\:*?"<>|':
+                    name = name.replace(char, "")
+                return name.strip()
+    except Exception:
+        pass
+    return ""
+
+def send_discord_notification(title, description, poster_url=None, fields=None):
+    webhook_url = state["settings"].get("discord_webhook_url", "")
+    if not webhook_url:
+        return
+    try:
+        embed = {
+            "title": title,
+            "description": description,
+            "color": 65474,
+            "fields": fields or [],
+            "footer": {"text": "AutoRip Control Center • Portable Edition"}
+        }
+        if poster_url:
+            embed["thumbnail"] = {"url": poster_url}
+            
+        payload = json.dumps({"embeds": [embed]}).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "AutoRipControlCenter"})
+        urllib.request.urlopen(req, timeout=5)
+        add_log("[Discord] Sent Discord webhook notification embed successfully!")
+    except Exception as e:
+        add_log(f"[Discord] Webhook notification failed: {e}")
+
 def check_nas_storage():
     try:
-        target_dir = state["settings"]["tv_destination"]
+        target_dir = state["settings"].get("tv_destination") or config["tv_destination"]
         drive_root = os.path.pathsplitdrive(target_dir)[0] + "\\"
         if os.path.exists(drive_root):
             usage = shutil.disk_usage(drive_root)
@@ -283,12 +316,7 @@ def run_autorip_pipeline():
             min_sec = state["settings"]["min_length_sec"]
 
         preset = state["settings"]["preset"]
-        if preset == "Auto":
-            if state["disc_type"] == "Blu-ray":
-                preset = "HQ 1080p30 Surround"
-            else:
-                preset = "HQ 720p30 Surround"
-        add_log(f"Media Type: {media_type.upper()} | Disc Type: {state['disc_type']} | Preset: {preset}")
+        add_log(f"Media Type: {media_type.upper()} | Disc Type: {state['disc_type']} | Preset/Encoder: {preset}")
 
         fetch_media_artwork()
 
@@ -369,6 +397,7 @@ def run_autorip_pipeline():
         year = state["settings"]["release_year"]
         season = state["settings"]["season_number"]
         start_ep = state["settings"]["start_episode"]
+        include_titles = state["settings"].get("include_episode_titles", True)
 
         for idx, raw_file in enumerate(target_files, start=1):
             state["current_title"] = idx
@@ -381,7 +410,11 @@ def run_autorip_pipeline():
                         target_filename = f"{movie_title} ({year}) - Part {idx:02d}.{fmt}"
                 else:
                     ep_num = start_ep + idx - 1
-                    target_filename = f"{show_name} - S{season:02d}E{ep_num:02d}.{fmt}"
+                    ep_name = fetch_episode_title(show_name, season, ep_num) if include_titles else ""
+                    if ep_name:
+                        target_filename = f"{show_name} - S{season:02d}E{ep_num:02d} - {ep_name}.{fmt}"
+                    else:
+                        target_filename = f"{show_name} - S{season:02d}E{ep_num:02d}.{fmt}"
             else:
                 target_filename = f"{label}_Title_{idx:02d}.{fmt}"
 
@@ -389,14 +422,21 @@ def run_autorip_pipeline():
             state["status_message"] = f"Encoding Title {idx} of {len(target_files)} ({target_filename})..."
             
             out_file = os.path.join(temp_encoded, target_filename)
-            add_log(f"[HandBrake] [{idx}/{len(target_files)}] Starting encode for '{target_filename}' (Preset: {preset})...")
+            add_log(f"[HandBrake] [{idx}/{len(target_files)}] Starting encode -> '{target_filename}'")
 
-            cmd_enc = [
-                config["handbrake_path"],
-                "-i", raw_file,
-                "-o", out_file,
-                "--preset", preset
-            ]
+            cmd_enc = [config["handbrake_path"], "-i", raw_file, "-o", out_file]
+            
+            if "NVENC H.264" in preset:
+                cmd_enc.extend(["--encoder", "nvenc_h264", "--quality", "20", "--encoder-preset", "fast"])
+            elif "NVENC H.265" in preset:
+                cmd_enc.extend(["--encoder", "nvenc_h265", "--quality", "22", "--encoder-preset", "fast"])
+            elif "Intel QSV" in preset:
+                cmd_enc.extend(["--encoder", "qsv_h264", "--quality", "20"])
+            elif "AMD VCE" in preset:
+                cmd_enc.extend(["--encoder", "vce_h264", "--quality", "20"])
+            else:
+                preset_arg = preset if preset != "Auto" else ("HQ 1080p30 Surround" if state["disc_type"] == "Blu-ray" else "HQ 720p30 Surround")
+                cmd_enc.extend(["--preset", preset_arg])
 
             p_enc = subprocess.Popen(cmd_enc, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             last_logged_quarter = -1
@@ -452,10 +492,12 @@ def run_autorip_pipeline():
         os.makedirs(dest_folder, exist_ok=True)
         add_log(f"[Destination] Directory: {dest_folder}")
 
+        moved_names = []
         for ef in encoded_files:
             dest = os.path.join(dest_folder, os.path.basename(ef))
             size_mb = round(os.path.getsize(ef) / (1024 * 1024), 1)
             shutil.move(ef, dest)
+            moved_names.append(os.path.basename(ef))
             add_log(f"[Transfer] Moved '{os.path.basename(ef)}' ({size_mb} MB) -> {dest}")
 
         if media_type == "tv" and state["settings"]["auto_rename"]:
@@ -480,6 +522,18 @@ def run_autorip_pipeline():
             "destination": dest_folder,
             "duration_min": duration_min
         })
+
+        send_discord_notification(
+            title=f"🎉 Disc Processing Complete: {label}",
+            description=f"Successfully ripped and encoded **{len(encoded_files)} episode(s)** in **{duration_min} minutes**!",
+            poster_url=state["artwork_url"],
+            fields=[
+                {"name": "Media Target", "value": f"{show_name if media_type=='tv' else movie_title} ({year})", "inline": True},
+                {"name": "Disc Type", "value": state["disc_type"], "inline": True},
+                {"name": "Destination", "value": f"`{dest_folder}`", "inline": False},
+                {"name": "Episodes Saved", "value": "\n".join([f"• `{n}`" for n in moved_names[:5]]) + (f"\n*...and {len(moved_names)-5} more*" if len(moved_names)>5 else ""), "inline": False}
+            ]
+        )
 
         if state["settings"]["auto_eject"]:
             add_log(f"Ejecting drive {state['drive_letter']}...")
@@ -588,7 +642,7 @@ def update_settings():
                 state["settings"][key] = int(val)
             except Exception:
                 pass
-        elif key in ["auto_eject", "auto_rename"]:
+        elif key in ["auto_eject", "auto_rename", "include_episode_titles"]:
             state["settings"][key] = bool(val)
         else:
             state["settings"][key] = str(val)
