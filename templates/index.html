@@ -37,135 +37,147 @@
 
     body {
       display: flex; flex-direction: column;
-      padding: 0.75rem 1.2rem; gap: 0.75rem;
+      padding: 0.65rem 1rem; gap: 0.65rem;
     }
 
     header {
-      width: 100%; height: 42px; flex-shrink: 0;
+      width: 100%; height: 38px; flex-shrink: 0;
       display: flex; justify-content: space-between; align-items: center;
       padding: 0 0.2rem;
     }
 
-    .brand { display: flex; align-items: center; gap: 0.6rem; }
+    .brand { display: flex; align-items: center; gap: 0.55rem; }
 
     .brand-icon {
-      width: 34px; height: 34px;
+      width: 32px; height: 32px;
       background: linear-gradient(135deg, var(--accent-primary), var(--accent-cyan));
-      border-radius: 9px;
+      border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      color: white; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+      color: white; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
     }
 
     .brand h1 {
       font-family: 'Outfit', sans-serif;
-      font-size: 1.25rem; font-weight: 700;
+      font-size: 1.2rem; font-weight: 700;
       background: linear-gradient(to right, #ffffff, #cbd5e1);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
 
-    .header-actions { display: flex; align-items: center; gap: 0.8rem; }
+    .header-actions { display: flex; align-items: center; gap: 0.75rem; }
 
     .nas-gauge-badge {
       background: rgba(15, 23, 42, 0.8);
       border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 9px; padding: 0.35rem 0.75rem;
-      display: flex; align-items: center; gap: 0.45rem;
-      font-size: 0.78rem;
+      border-radius: 8px; padding: 0.3rem 0.65rem;
+      display: flex; align-items: center; gap: 0.4rem;
+      font-size: 0.75rem;
     }
 
     .main-workspace {
       flex: 1; display: grid;
-      grid-template-columns: 310px 1fr 330px; gap: 0.85rem;
-      min-height: 0; height: calc(100vh - 60px);
+      grid-template-columns: 310px 1fr 330px; gap: 0.75rem;
+      min-height: 0; height: calc(100vh - 54px);
     }
 
     .card {
       background: var(--card-bg);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--card-border);
-      border-radius: 16px; padding: 1rem;
+      border-radius: 14px; padding: 0.85rem;
       box-shadow: var(--card-glow);
-      display: flex; flex-direction: column; min-height: 0;
+      display: flex; flex-direction: column; min-height: 0; justify-content: space-between;
     }
 
     .card-title {
       font-family: 'Outfit', sans-serif;
-      font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem;
+      font-size: 0.88rem; font-weight: 600; margin-bottom: 0.6rem;
       display: flex; align-items: center; justify-content: space-between;
       color: #e2e8f0; flex-shrink: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      padding-bottom: 0.5rem;
+      padding-bottom: 0.45rem;
     }
 
-    .card-title-left { display: flex; align-items: center; gap: 0.4rem; }
+    .card-title-left { display: flex; align-items: center; gap: 0.35rem; }
 
     /* Left Column: Media & Setup */
     .poster-box {
-      display: flex; gap: 0.75rem; align-items: flex-start;
-      background: rgba(15, 23, 42, 0.5); padding: 0.75rem; border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.04); margin-bottom: 0.75rem; flex-shrink: 0;
+      display: flex; gap: 0.65rem; align-items: flex-start;
+      background: rgba(15, 23, 42, 0.5); padding: 0.6rem; border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.04); margin-bottom: 0.6rem; flex-shrink: 0;
     }
 
     .poster-img {
-      width: 75px; height: 110px;
-      border-radius: 8px; object-fit: cover;
+      width: 70px; height: 100px;
+      border-radius: 7px; object-fit: cover;
       border: 1px solid rgba(255, 255, 255, 0.1);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
       background: #0f172a; flex-shrink: 0;
     }
 
-    .media-meta { display: flex; flex-direction: column; gap: 0.2rem; }
-    .media-meta h2 { font-family: 'Outfit', sans-serif; font-size: 1rem; font-weight: 700; color: #f8fafc; }
-    .media-meta p { font-size: 0.72rem; color: var(--text-muted); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .media-meta { display: flex; flex-direction: column; gap: 0.15rem; }
+    .media-meta h2 { font-family: 'Outfit', sans-serif; font-size: 0.95rem; font-weight: 700; color: #f8fafc; }
+    .media-meta p { font-size: 0.7rem; color: var(--text-muted); line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
-    .collection-matrix { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
+    .collection-matrix { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
     .matrix-pill {
-      padding: 0.2rem 0.45rem; border-radius: 6px;
-      font-size: 0.68rem; font-weight: 600;
-      display: flex; align-items: center; gap: 0.25rem;
+      padding: 0.18rem 0.4rem; border-radius: 5px;
+      font-size: 0.65rem; font-weight: 600;
+      display: flex; align-items: center; gap: 0.2rem;
       background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.08);
     }
     .matrix-pill.done { background: rgba(16, 185, 129, 0.15); border-color: var(--accent-emerald); color: var(--accent-emerald); }
     .matrix-pill.active { background: rgba(99, 102, 241, 0.2); border-color: var(--accent-primary); color: #818cf8; }
 
-    .setup-fields { display: flex; flex-direction: column; gap: 0.65rem; overflow-y: auto; flex: 1; justify-content: flex-start; }
+    .setup-fields { display: flex; flex-direction: column; gap: 0.5rem; }
 
-    .input-row { display: flex; gap: 0.5rem; }
-    .input-group { flex: 1; display: flex; flex-direction: column; gap: 0.3rem; }
-    .input-group label { font-size: 0.73rem; color: var(--text-muted); font-weight: 500; }
+    .input-row { display: flex; gap: 0.4rem; }
+    .input-group { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
+    .input-group label { font-size: 0.7rem; color: var(--text-muted); font-weight: 500; }
 
     select, input[type="text"], input[type="number"] {
       background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.1);
-      color: white; padding: 0.45rem 0.6rem; border-radius: 8px; font-size: 0.82rem; outline: none;
+      color: white; padding: 0.4rem 0.55rem; border-radius: 7px; font-size: 0.8rem; outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent-primary); }
+
+    .quick-preset-box {
+      background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 10px; padding: 0.6rem; margin-top: auto; display: flex; flex-direction: column; gap: 0.4rem;
+    }
+    .quick-preset-title { font-size: 0.68rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .quick-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; }
+    .quick-btn {
+      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #cbd5e1; padding: 0.35rem; border-radius: 6px; font-size: 0.72rem; cursor: pointer; text-align: center;
       transition: all 0.2s ease;
     }
-    select:focus, input:focus { border-color: var(--accent-primary); box-shadow: 0 0 10px rgba(99, 102, 241, 0.3); }
+    .quick-btn:hover { background: rgba(99, 102, 241, 0.2); border-color: var(--accent-primary); color: white; }
 
     /* Center Column: Workflow Hero */
-    .workflow-hero { display: flex; flex-direction: column; gap: 0.75rem; flex: 1; min-height: 0; }
+    .workflow-hero { display: flex; flex-direction: column; gap: 0.65rem; flex: 1; min-height: 0; }
 
     .drive-status {
       display: flex; align-items: center; justify-content: space-between;
       background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 12px; padding: 0.75rem 1rem; flex-shrink: 0;
+      border-radius: 11px; padding: 0.65rem 0.85rem; flex-shrink: 0;
     }
 
-    .drive-info { display: flex; align-items: center; gap: 0.75rem; }
+    .drive-info { display: flex; align-items: center; gap: 0.7rem; }
     .disc-icon {
-      width: 40px; height: 40px; border-radius: 50%;
+      width: 38px; height: 38px; border-radius: 50%;
       background: rgba(99, 102, 241, 0.15); border: 2px dashed var(--accent-primary);
       display: flex; align-items: center; justify-content: center; color: var(--accent-primary);
     }
-    .drive-text h3 { font-size: 0.95rem; font-weight: 600; }
-    .badge-group { display: flex; gap: 0.3rem; margin-top: 0.2rem; }
-    .badge { padding: 0.18rem 0.45rem; border-radius: 10px; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; }
+    .drive-text h3 { font-size: 0.92rem; font-weight: 600; }
+    .badge-group { display: flex; gap: 0.25rem; margin-top: 0.15rem; }
+    .badge { padding: 0.15rem 0.4rem; border-radius: 10px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; }
     .badge-success { background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald); }
     .badge-empty { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); border: 1px solid var(--text-muted); }
     .badge-type { background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); border: 1px solid var(--accent-cyan); }
 
     .btn {
-      padding: 0.5rem 0.95rem; border-radius: 8px;
-      font-weight: 600; font-size: 0.8rem; cursor: pointer; border: none;
-      transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.45rem 0.9rem; border-radius: 7px;
+      font-weight: 600; font-size: 0.78rem; cursor: pointer; border: none;
+      transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.35rem;
     }
     .btn-primary { background: linear-gradient(135deg, var(--accent-primary), #4f46e5); color: white; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3); }
     .btn-primary:hover { transform: translateY(-1px); }
@@ -174,54 +186,63 @@
     .btn-warning { background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .stepper { display: flex; justify-content: space-between; margin: 0.3rem 0; position: relative; flex-shrink: 0; }
+    .stepper { display: flex; justify-content: space-between; margin: 0.2rem 0; position: relative; flex-shrink: 0; }
     .stepper::before { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 2px; background: rgba(255, 255, 255, 0.08); z-index: 1; transform: translateY(-50%); }
-    .step-item { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+    .step-item { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 0.2rem; }
     .step-bubble {
-      width: 30px; height: 30px; border-radius: 50%;
+      width: 28px; height: 28px; border-radius: 50%;
       background: #1e293b; border: 2px solid rgba(255, 255, 255, 0.15);
       display: flex; align-items: center; justify-content: center;
-      font-weight: 600; font-size: 0.78rem; color: var(--text-muted);
+      font-weight: 600; font-size: 0.75rem; color: var(--text-muted);
     }
-    .step-item.active .step-bubble { background: var(--accent-primary); border-color: #818cf8; color: white; box-shadow: 0 0 12px rgba(99, 102, 241, 0.6); }
+    .step-item.active .step-bubble { background: var(--accent-primary); border-color: #818cf8; color: white; box-shadow: 0 0 10px rgba(99, 102, 241, 0.6); }
     .step-item.done .step-bubble { background: var(--accent-emerald); border-color: var(--accent-emerald); color: white; }
-    .step-label { font-size: 0.7rem; color: var(--text-muted); font-weight: 500; }
+    .step-label { font-size: 0.68rem; color: var(--text-muted); font-weight: 500; }
     .step-item.active .step-label { color: white; font-weight: 600; }
 
-    .progress-section { display: flex; flex-direction: column; gap: 0.35rem; flex-shrink: 0; }
-    .progress-header { display: flex; justify-content: space-between; font-size: 0.8rem; }
-    .progress-bar-bg { width: 100%; height: 9px; background: rgba(15, 23, 42, 0.8); border-radius: 7px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05); }
-    .progress-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-cyan)); border-radius: 7px; transition: width 0.4s ease; }
+    .progress-section { display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; }
+    .progress-header { display: flex; justify-content: space-between; font-size: 0.78rem; }
+    .progress-bar-bg { width: 100%; height: 8px; background: rgba(15, 23, 42, 0.8); border-radius: 6px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05); }
+    .progress-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-cyan)); border-radius: 6px; transition: width 0.4s ease; }
 
-    .stats-bar { display: flex; justify-content: space-between; padding: 0.5rem 0.75rem; background: rgba(15, 23, 42, 0.5); border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.04); font-size: 0.76rem; flex-shrink: 0; }
-    .stat-item { display: flex; align-items: center; gap: 0.35rem; color: var(--text-muted); }
+    .stats-bar { display: flex; justify-content: space-between; padding: 0.45rem 0.7rem; background: rgba(15, 23, 42, 0.5); border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.04); font-size: 0.74rem; flex-shrink: 0; }
+    .stat-item { display: flex; align-items: center; gap: 0.3rem; color: var(--text-muted); }
     .stat-value { font-weight: 700; color: var(--accent-cyan); }
 
     .console {
-      flex: 1; background: #090d16; border-radius: 10px; padding: 0.7rem;
-      font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; color: #38bdf8;
-      overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.05); min-height: 120px;
+      flex: 1; background: #090d16; border-radius: 8px; padding: 0.65rem;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: #38bdf8;
+      overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.05); min-height: 100px;
     }
-    .console-line { line-height: 1.45; word-break: break-all; }
+    .console-line { line-height: 1.4; word-break: break-all; }
 
     /* Right Column: Tabbed Panel */
-    .tab-header { display: flex; gap: 0.35rem; margin-bottom: 0.6rem; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.4rem; flex-shrink: 0; }
+    .tab-header { display: flex; gap: 0.35rem; margin-bottom: 0.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.35rem; flex-shrink: 0; }
     .tab-btn {
-      padding: 0.4rem 0.65rem; border-radius: 7px; font-size: 0.78rem; font-weight: 600;
+      padding: 0.35rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;
       background: transparent; color: var(--text-muted); border: none; cursor: pointer;
       display: flex; align-items: center; gap: 0.35rem; transition: all 0.2s ease;
     }
     .tab-btn.active { background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); }
 
-    .tab-content { flex: 1; overflow-y: auto; min-height: 0; display: none; justify-content: flex-start; }
-    .tab-content.active { display: flex; flex-direction: column; gap: 0.65rem; }
+    .tab-content { flex: 1; overflow-y: auto; min-height: 0; display: none; }
+    .tab-content.active { display: flex; flex-direction: column; justify-content: space-between; }
 
-    .file-list { display: flex; flex-direction: column; gap: 0.4rem; }
-    .file-item { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.7rem; background: rgba(15, 23, 42, 0.4); border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.03); }
-    .file-name { display: flex; align-items: center; gap: 0.4rem; font-size: 0.76rem; word-break: break-all; }
-    .file-size { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
+    .settings-inputs { display: flex; flex-direction: column; gap: 0.5rem; }
 
-    .history-item { padding: 0.55rem; background: rgba(15, 23, 42, 0.4); border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; gap: 0.18rem; font-size: 0.74rem; }
+    .sys-info-box {
+      background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 10px; padding: 0.6rem; margin-top: auto; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.7rem;
+    }
+    .sys-info-row { display: flex; justify-content: space-between; color: var(--text-muted); }
+    .sys-info-val { color: var(--accent-emerald); font-weight: 600; }
+
+    .file-list { display: flex; flex-direction: column; gap: 0.35rem; }
+    .file-item { display: flex; align-items: center; justify-content: space-between; padding: 0.45rem 0.65rem; background: rgba(15, 23, 42, 0.4); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.03); }
+    .file-name { display: flex; align-items: center; gap: 0.35rem; font-size: 0.74rem; word-break: break-all; }
+    .file-size { font-size: 0.7rem; color: var(--text-muted); font-weight: 500; }
+
+    .history-item { padding: 0.5rem; background: rgba(15, 23, 42, 0.4); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; gap: 0.18rem; font-size: 0.74rem; }
 
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -250,12 +271,12 @@
   </header>
 
   <!-- Countdown AutoStart Banner -->
-  <div class="card" id="countdownBanner" style="display: none; background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(244, 63, 94, 0.2)); border-color: var(--accent-amber); padding: 0.5rem 0.8rem; flex-direction: row; justify-content: space-between; align-items: center; flex-shrink: 0;">
-    <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; font-weight: 600; color: var(--accent-amber);">
+  <div class="card" id="countdownBanner" style="display: none; background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(244, 63, 94, 0.2)); border-color: var(--accent-amber); padding: 0.45rem 0.8rem; flex-direction: row; justify-content: space-between; align-items: center; flex-shrink: 0;">
+    <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; font-weight: 600; color: var(--accent-amber);">
       <i data-lucide="zap" style="width: 16px;"></i>
-      Disc Detected! Auto-Starting rip in <span id="countdownSec" style="font-size: 1rem; font-weight: 800;">10</span>s...
+      Disc Detected! Auto-Starting rip in <span id="countdownSec" style="font-size: 0.95rem; font-weight: 800;">10</span>s...
     </div>
-    <button class="btn btn-warning" onclick="cancelAutoStart()"><i data-lucide="x" style="width: 13px;"></i> Cancel</button>
+    <button class="btn btn-warning" onclick="cancelAutoStart()"><i data-lucide="x" style="width: 12px;"></i> Cancel</button>
   </div>
 
   <!-- Main 100vh Grid Workspace -->
@@ -263,55 +284,68 @@
 
     <!-- COLUMN 1: Media Setup & Poster Artwork -->
     <div class="card">
-      <div class="card-title">
-        <div class="card-title-left"><i data-lucide="film" style="color: var(--accent-cyan); width: 15px;"></i> Active Media Setup</div>
-      </div>
+      <div>
+        <div class="card-title">
+          <div class="card-title-left"><i data-lucide="film" style="color: var(--accent-cyan); width: 15px;"></i> Active Media Setup</div>
+        </div>
 
-      <div class="poster-box">
-        <img src="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&q=80" id="posterImg" class="poster-img" alt="Poster Artwork">
-        <div class="media-meta">
-          <h2 id="mediaHeaderTitle">TaleSpin (1990)</h2>
-          <p id="mediaHeaderSummary">Baloo the Bear stars in air cargo adventures in Cape Suzette.</p>
-          <div class="collection-matrix" id="collectionMatrix">
-            <div class="matrix-pill done"><i data-lucide="check-circle" style="width: 11px;"></i> Vol 1</div>
-            <div class="matrix-pill active"><i data-lucide="disc" style="width: 11px;" class="spin"></i> Vol 2 D1</div>
+        <div class="poster-box">
+          <img src="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&q=80" id="posterImg" class="poster-img" alt="Poster Artwork">
+          <div class="media-meta">
+            <h2 id="mediaHeaderTitle">TaleSpin (1990)</h2>
+            <p id="mediaHeaderSummary">Baloo the Bear stars in air cargo adventures in Cape Suzette.</p>
+            <div class="collection-matrix" id="collectionMatrix">
+              <div class="matrix-pill done"><i data-lucide="check-circle" style="width: 11px;"></i> Vol 1</div>
+              <div class="matrix-pill active"><i data-lucide="disc" style="width: 11px;" class="spin"></i> Vol 2 D1</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="setup-fields">
-        <div class="input-group">
-          <label>Category</label>
-          <select id="settingMediaType" onchange="toggleMediaFields(); saveSettings();">
-            <option value="tv">📺 TV Show (Series)</option>
-            <option value="movie">🎬 Movie (Feature)</option>
-          </select>
-        </div>
-
-        <div class="input-group" id="groupTvName">
-          <label>TV Show Name</label>
-          <input type="text" id="settingShowName" value="TaleSpin" onchange="saveSettings()">
-        </div>
-
-        <div class="input-group" id="groupMovieTitle" style="display: none;">
-          <label>Movie Title</label>
-          <input type="text" id="settingMovieTitle" value="DuckTales The Movie" onchange="saveSettings()">
-        </div>
-
-        <div class="input-row">
+        <div class="setup-fields">
           <div class="input-group">
-            <label>Year</label>
-            <input type="text" id="settingYear" value="1990" onchange="saveSettings()">
+            <label>Category</label>
+            <select id="settingMediaType" onchange="toggleMediaFields(); saveSettings();">
+              <option value="tv">📺 TV Show (Series)</option>
+              <option value="movie">🎬 Movie (Feature)</option>
+            </select>
           </div>
-          <div class="input-group" id="groupTvSeason">
-            <label>Season</label>
-            <input type="number" id="settingSeason" value="1" onchange="saveSettings()">
+
+          <div class="input-group" id="groupTvName">
+            <label>TV Show Name</label>
+            <input type="text" id="settingShowName" value="TaleSpin" onchange="saveSettings()">
+          </div>
+
+          <div class="input-group" id="groupMovieTitle" style="display: none;">
+            <label>Movie Title</label>
+            <input type="text" id="settingMovieTitle" value="DuckTales The Movie" onchange="saveSettings()">
+          </div>
+
+          <div class="input-row">
+            <div class="input-group">
+              <label>Year</label>
+              <input type="text" id="settingYear" value="1990" onchange="saveSettings()">
+            </div>
+            <div class="input-group" id="groupTvSeason">
+              <label>Season</label>
+              <input type="number" id="settingSeason" value="1" onchange="saveSettings()">
+            </div>
+          </div>
+
+          <div class="input-group" id="groupTvStartEp">
+            <label>Start Episode #</label>
+            <input type="number" id="settingStartEp" value="27" onchange="saveSettings()">
           </div>
         </div>
+      </div>
 
-        <div class="input-group" id="groupTvStartEp">
-          <label>Start Episode #</label>
-          <input type="number" id="settingStartEp" value="27" onchange="saveSettings()">
+      <!-- Quick Preset Selector Widget -->
+      <div class="quick-preset-box">
+        <div class="quick-preset-title">Quick Show Presets</div>
+        <div class="quick-btns">
+          <button class="quick-btn" onclick="applyQuickShow('DuckTales', '1987', 1, 1)">DuckTales</button>
+          <button class="quick-btn" onclick="applyQuickShow('TaleSpin', '1990', 1, 27)">TaleSpin Vol 2</button>
+          <button class="quick-btn" onclick="applyQuickShow('Chip \'n Dale', '1989', 1, 1)">Chip 'n Dale</button>
+          <button class="quick-btn" onclick="applyQuickShow('Darkwing Duck', '1991', 1, 1)">Darkwing Duck</button>
         </div>
       </div>
     </div>
@@ -389,46 +423,54 @@
 
       <!-- TAB 1: SETTINGS -->
       <div class="tab-content active" id="tabSettings">
-        <div class="input-group">
-          <label>Encoder / Preset</label>
-          <select id="settingPreset" onchange="saveSettings()">
-            <option value="Auto">Auto (720p DVD / 1080p BD)</option>
-            <option value="NVIDIA NVENC H.264">⚡ NVIDIA NVENC H.264 (GPU)</option>
-            <option value="NVIDIA NVENC HEVC">⚡ NVIDIA NVENC H.265 (GPU)</option>
-            <option value="Intel QSV">⚡ Intel QuickSync (GPU)</option>
-            <option value="AMD VCE">⚡ AMD VCE (GPU)</option>
-            <option value="HQ 720p30 Surround">HQ 720p30 (CPU)</option>
-            <option value="HQ 1080p30 Surround">HQ 1080p30 (CPU)</option>
-          </select>
+        <div class="settings-inputs">
+          <div class="input-group">
+            <label>Encoder / Preset</label>
+            <select id="settingPreset" onchange="saveSettings()">
+              <option value="Auto">Auto (720p DVD / 1080p BD)</option>
+              <option value="NVIDIA NVENC H.264">⚡ NVIDIA NVENC H.264 (GPU)</option>
+              <option value="NVIDIA NVENC HEVC">⚡ NVIDIA NVENC H.265 (GPU)</option>
+              <option value="Intel QSV">⚡ Intel QuickSync (GPU)</option>
+              <option value="AMD VCE">⚡ AMD VCE (GPU)</option>
+              <option value="HQ 720p30 Surround">HQ 720p30 (CPU)</option>
+              <option value="HQ 1080p30 Surround">HQ 1080p30 (CPU)</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label>Container Format</label>
+            <select id="settingFormat" onchange="saveSettings()">
+              <option value="mp4">MP4 (.mp4)</option>
+              <option value="mkv">MKV (.mkv)</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label>Fetch TV Episode Titles</label>
+            <select id="settingEpTitles" onchange="saveSettings()">
+              <option value="true">Enabled (e.g. S01E27 - Title.mp4)</option>
+              <option value="false">Disabled (e.g. S01E27.mp4)</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label>Auto-Eject Drive</label>
+            <select id="settingEject" onchange="saveSettings()">
+              <option value="true">Enabled (Eject on finish)</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label>Discord Webhook (Optional)</label>
+            <input type="text" id="settingDiscordWebhook" placeholder="https://discord.com/api/webhooks/..." onchange="saveSettings()">
+          </div>
         </div>
 
-        <div class="input-group">
-          <label>Container Format</label>
-          <select id="settingFormat" onchange="saveSettings()">
-            <option value="mp4">MP4 (.mp4)</option>
-            <option value="mkv">MKV (.mkv)</option>
-          </select>
-        </div>
-
-        <div class="input-group">
-          <label>Fetch TV Episode Titles</label>
-          <select id="settingEpTitles" onchange="saveSettings()">
-            <option value="true">Enabled (e.g. S01E27 - Title.mp4)</option>
-            <option value="false">Disabled (e.g. S01E27.mp4)</option>
-          </select>
-        </div>
-
-        <div class="input-group">
-          <label>Auto-Eject Drive</label>
-          <select id="settingEject" onchange="saveSettings()">
-            <option value="true">Enabled (Eject on finish)</option>
-            <option value="false">Disabled</option>
-          </select>
-        </div>
-
-        <div class="input-group">
-          <label>Discord Webhook (Optional)</label>
-          <input type="text" id="settingDiscordWebhook" placeholder="https://discord.com/api/webhooks/..." onchange="saveSettings()">
+        <div class="sys-info-box">
+          <div class="sys-info-row"><span>Target NAS Path:</span><span style="color:#f8fafc;">Z:\TV Shows</span></div>
+          <div class="sys-info-row"><span>Optical Drive:</span><span style="color:#f8fafc;">D: ASUS BW-16D1HT</span></div>
+          <div class="sys-info-row"><span>MakeMKV & HandBrake:</span><span class="sys-info-val">ONLINE ✅</span></div>
         </div>
       </div>
 
@@ -466,6 +508,16 @@
         document.getElementById('statElapsed').innerText = '--:--:--';
       }
     }, 1000);
+
+    function applyQuickShow(name, year, season, startEp) {
+      document.getElementById('settingMediaType').value = 'tv';
+      document.getElementById('settingShowName').value = name;
+      document.getElementById('settingYear').value = year;
+      document.getElementById('settingSeason').value = season;
+      document.getElementById('settingStartEp').value = startEp;
+      toggleMediaFields();
+      saveSettings();
+    }
 
     function switchTab(evt, tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
