@@ -221,7 +221,7 @@
     .tab-btn {
       padding: 0.35rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;
       background: transparent; color: var(--text-muted); border: none; cursor: pointer;
-      display: flex; align-items: center; gap: 0.35rem; transition: all 0.2s ease;
+      display: flex; align-items: center; gap: 0.3rem; transition: all 0.2s ease;
     }
     .tab-btn.active { background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); }
 
@@ -307,6 +307,7 @@
             <select id="settingMediaType" onchange="toggleMediaFields(); saveSettings();">
               <option value="tv">📺 TV Show (Series)</option>
               <option value="movie">🎬 Movie (Feature)</option>
+              <option value="ps3">🎮 PS3 Game Disc (RPCS3 Format)</option>
             </select>
           </div>
 
@@ -470,7 +471,7 @@
         <div class="sys-info-box">
           <div class="sys-info-row"><span>Target NAS Path:</span><span style="color:#f8fafc;">Z:\TV Shows</span></div>
           <div class="sys-info-row"><span>Optical Drive:</span><span style="color:#f8fafc;">D: ASUS BW-16D1HT</span></div>
-          <div class="sys-info-row"><span>MakeMKV & HandBrake:</span><span class="sys-info-val">ONLINE ✅</span></div>
+          <div class="sys-info-row"><span>Tools (MakeMKV & PS3 Dumper):</span><span class="sys-info-val">ONLINE ✅</span></div>
         </div>
       </div>
 
@@ -534,6 +535,11 @@
         document.getElementById('groupTvSeason').style.display = 'none';
         document.getElementById('groupTvStartEp').style.display = 'none';
         document.getElementById('groupMovieTitle').style.display = 'flex';
+      } else if (mediaType === 'ps3') {
+        document.getElementById('groupTvName').style.display = 'none';
+        document.getElementById('groupTvSeason').style.display = 'none';
+        document.getElementById('groupTvStartEp').style.display = 'none';
+        document.getElementById('groupMovieTitle').style.display = 'none';
       } else {
         document.getElementById('groupTvName').style.display = 'flex';
         document.getElementById('groupTvSeason').style.display = 'flex';

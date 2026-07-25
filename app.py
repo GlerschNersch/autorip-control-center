@@ -10,82 +10,34 @@ import urllib.request
 from flask import Flask, render_template, jsonify, request
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
 
-# --- Portable Auto-Detection Helpers ---
-def find_makemkv():
-    candidates = [
-        r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe",
-        r"C:\Program Files\MakeMKV\makemkvcon64.exe",
-        r"C:\Program Files (x86)\MakeMKV\makemkvcon.exe",
-        r"C:\Program Files\MakeMKV\makemkvcon.exe"
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
-    return candidates[0]
 
-def find_handbrake():
-    winget_pattern = r"C:\Users\*\AppData\Local\Microsoft\WinGet\Packages\HandBrake.HandBrake.CLI*\HandBrakeCLI.exe"
-    matches = glob.glob(winget_pattern)
-    if matches:
-        return matches[0]
-    candidates = [
-        r"C:\Program Files\HandBrake\HandBrakeCLI.exe",
-        r"C:\Program Files (x86)\HandBrake\HandBrakeCLI.exe"
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
-    return r"C:\Program Files\HandBrake\HandBrakeCLI.exe"
+# --- Configuration & Paths ---
+MAKEMKV_PATH = r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
+HANDBRAKE_PATH = r"C:\Users\matt\AppData\Local\Microsoft\WinGet\Packages\HandBrake.HandBrake.CLI_Microsoft.Winget.Source_8wekyb3d8bbwe\HandBrakeCLI.exe"
+PS3_DUMPER_PATH = r"C:\Tools\ps3-disc-dumper\ps3-disc-dumper.exe"
+TEMP_RAW_DIR = r"C:\AutoRipTemp\Raw"
+TEMP_ENCODED_DIR = r"C:\AutoRipTemp\Encoded"
+DEFAULT_TV_DESTINATION = r"Z:\TV Shows"
+DEFAULT_MOVIE_DESTINATION = r"Z:\Movies"
+DEFAULT_PS3_DESTINATION = r"Z:\Games\PS3"
+HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
 
-def find_optical_drive():
-    try:
-        cmd = "Get-Volume | Where-Object { $_.DriveType -eq 'CD-ROM' } | Select-Object -ExpandProperty DriveLetter"
-        out = subprocess.check_output(["powershell", "-Command", cmd], text=True).strip()
-        if out:
-            return out.split('\n')[0].strip() + ":"
-    except Exception:
-        pass
-    return "D:"
-
-# --- Constants & Configuration ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
-HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
-
-def load_config():
-    default_config = {
-        "makemkv_path": find_makemkv(),
-        "handbrake_path": find_handbrake(),
-        "drive_letter": find_optical_drive(),
-        "temp_raw_dir": r"C:\AutoRipTemp\Raw",
-        "temp_encoded_dir": r"C:\AutoRipTemp\Encoded",
-        "tv_destination": r"C:\Media\TV Shows",
-        "movie_destination": r"C:\Media\Movies"
-    }
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                cfg = json.load(f)
-                default_config.update(cfg)
-        except Exception:
-            pass
-    return default_config
-
-config = load_config()
 
 # --- Global State ---
 state = {
-    "stage": "IDLE",
+    "stage": "IDLE",            # IDLE, COUNTDOWN, RIPPING, ENCODING, TRANSFERRING, COMPLETE, ERROR
     "status_message": "System Ready - Insert a disc to begin",
     "progress_pct": 0,
     "current_file": "",
     "current_title": 0,
     "total_titles": 0,
-    "drive_letter": config["drive_letter"],
+    "drive_letter": "D:",
     "disc_label": "No Disc Detected",
     "disc_present": False,
-    "disc_type": "DVD",
+    "disc_type": "DVD",          # DVD or Blu-ray
     "fps": "0",
     "eta": "--:--",
     "start_timestamp": 0,
@@ -96,20 +48,18 @@ state = {
     "nas_storage": {"free_gb": 0, "total_gb": 0, "used_pct": 0},
     "logs": [f"{time.strftime('[%H:%M:%S]')} System Ready - AutoRip Control Center Online"],
     "settings": {
-        "media_type": "tv",
-        "format": "mp4",
-        "preset": "Auto",
+        "media_type": "tv",       # tv, movie, or ps3
+        "format": "mp4",          # mp4 or mkv
+        "preset": "Auto",         # Auto, HQ 720p30 Surround, HQ 1080p30 Surround, NVENC H.264, NVENC H.265, Intel QSV, AMD VCE
         "min_length_sec": 600,
         "auto_eject": True,
         "auto_rename": True,
         "include_episode_titles": True,
         "show_name": "TaleSpin",
-        "movie_title": "Movie Title",
+        "movie_title": "DuckTales The Movie",
         "release_year": "1990",
         "season_number": 1,
-        "start_episode": 1,
-        "tv_destination": config["tv_destination"],
-        "movie_destination": config["movie_destination"],
+        "start_episode": 27,
         "discord_webhook_url": "",
         "plex_url": "",
         "plex_token": ""
@@ -159,7 +109,7 @@ def fetch_media_artwork():
             if data and "summary" in data and data["summary"]:
                 summary = data["summary"].replace("<p>", "").replace("</p>", "").replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
                 state["media_summary"] = summary
-        else:
+        elif media_type == "movie":
             query = state["settings"]["movie_title"]
             url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=movie&limit=1"
             req = urllib.request.urlopen(url, timeout=3)
@@ -199,7 +149,7 @@ def send_discord_notification(title, description, poster_url=None, fields=None):
             "description": description,
             "color": 65474,
             "fields": fields or [],
-            "footer": {"text": "AutoRip Control Center • Portable Edition"}
+            "footer": {"text": "AutoRip Control Center • NAS Processing Suite"}
         }
         if poster_url:
             embed["thumbnail"] = {"url": poster_url}
@@ -213,18 +163,15 @@ def send_discord_notification(title, description, poster_url=None, fields=None):
 
 def check_nas_storage():
     try:
-        target_dir = state["settings"].get("tv_destination") or config["tv_destination"]
-        drive_root = os.path.pathsplitdrive(target_dir)[0] + "\\"
-        if os.path.exists(drive_root):
-            usage = shutil.disk_usage(drive_root)
-            free_gb = round(usage.free / (1024 ** 3), 1)
-            total_gb = round(usage.total / (1024 ** 3), 1)
-            used_pct = round(((usage.total - usage.free) / usage.total) * 100, 1)
-            state["nas_storage"] = {
-                "free_gb": free_gb,
-                "total_gb": total_gb,
-                "used_pct": used_pct
-            }
+        usage = shutil.disk_usage(r"Z:\ ")
+        free_gb = round(usage.free / (1024 ** 3), 1)
+        total_gb = round(usage.total / (1024 ** 3), 1)
+        used_pct = round(((usage.total - usage.free) / usage.total) * 100, 1)
+        state["nas_storage"] = {
+            "free_gb": free_gb,
+            "total_gb": total_gb,
+            "used_pct": used_pct
+        }
     except Exception:
         state["nas_storage"] = {"free_gb": 0, "total_gb": 0, "used_pct": 0}
 
@@ -238,7 +185,7 @@ def check_drive_status():
             state["disc_label"] = output
             state["disc_present"] = True
             
-            if "BD" in output.upper() or "BLURAY" in output.upper():
+            if "BD" in output.upper() or "BLURAY" in output.upper() or "PS3" in output.upper():
                 state["disc_type"] = "Blu-ray"
             else:
                 state["disc_type"] = "DVD"
@@ -279,6 +226,20 @@ def trigger_auto_start_countdown():
 
     threading.Thread(target=countdown_thread, daemon=True).start()
 
+def trigger_plex_refresh():
+    url = state["settings"]["plex_url"]
+    token = state["settings"]["plex_token"]
+    if url:
+        try:
+            req_url = f"{url.rstrip('/')}/library/sections/all/refresh"
+            if token:
+                req_url += f"?X-Plex-Token={token}"
+            add_log(f"Sending Plex refresh signal to {url}...")
+            urllib.request.urlopen(req_url, timeout=5)
+            add_log("Plex library refresh triggered successfully!")
+        except Exception as e:
+            add_log(f"Plex refresh failed: {e}")
+
 def run_autorip_pipeline_async():
     thread = threading.Thread(target=run_autorip_pipeline, daemon=True)
     thread.start()
@@ -290,18 +251,15 @@ def run_autorip_pipeline():
 
     start_time = time.time()
     state["start_timestamp"] = int(start_time)
-    temp_raw = config["temp_raw_dir"]
-    temp_encoded = config["temp_encoded_dir"]
-    
     try:
-        os.makedirs(temp_raw, exist_ok=True)
-        os.makedirs(temp_encoded, exist_ok=True)
+        os.makedirs(TEMP_RAW_DIR, exist_ok=True)
+        os.makedirs(TEMP_ENCODED_DIR, exist_ok=True)
 
         state["logs"] = [f"{time.strftime('[%H:%M:%S]')} === Starting AutoRip Pipeline ==="]
 
         check_drive_status()
         if not state["disc_present"]:
-            add_log(f"No disc detected in drive {state['drive_letter']}. Aborting.")
+            add_log("No disc detected in drive D:. Aborting.")
             state["stage"] = "ERROR"
             state["status_message"] = "No disc in drive"
             return
@@ -310,6 +268,46 @@ def run_autorip_pipeline():
         fmt = state["settings"]["format"]
         media_type = state["settings"]["media_type"]
         
+        if media_type == "ps3":
+            state["stage"] = "RIPPING"
+            state["status_message"] = f"Dumping PS3 Game Disc with PS3 Disc Dumper ({label})..."
+            state["progress_pct"] = 15
+            add_log(f"=== STAGE 1/1: PS3 DISC DUMPER STARTED ({label}) ===")
+            
+            ps3_out_dir = os.path.join(DEFAULT_PS3_DESTINATION, label)
+            os.makedirs(ps3_out_dir, exist_ok=True)
+            
+            cmd_ps3 = [PS3_DUMPER_PATH]
+            p_ps3 = subprocess.Popen(cmd_ps3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=r"C:\Tools\ps3-disc-dumper")
+            for line in p_ps3.stdout:
+                line_str = line.strip()
+                if line_str:
+                    add_log(f"[PS3 Dumper] {line_str}")
+                    if "%" in line_str:
+                        try:
+                            pct = int(line_str.split("%")[0].split()[-1])
+                            state["progress_pct"] = min(pct, 95)
+                        except Exception:
+                            pass
+
+            p_ps3.wait()
+            state["stage"] = "COMPLETE"
+            state["status_message"] = f"PS3 Game Disc Dumped Successfully to {ps3_out_dir}!"
+            state["progress_pct"] = 100
+            
+            send_discord_notification(
+                title=f"🎮 PS3 Game Dumped: {label}",
+                description=f"Successfully dumped PS3 game disc directly to NAS!",
+                fields=[
+                    {"name": "Game Label", "value": label, "inline": True},
+                    {"name": "Destination", "value": f"`{ps3_out_dir}`", "inline": False}
+                ]
+            )
+            
+            if state["settings"]["auto_eject"]:
+                subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
+            return
+
         if media_type == "movie":
             min_sec = max(state["settings"]["min_length_sec"], 1800)
         else:
@@ -326,8 +324,8 @@ def run_autorip_pipeline():
         state["progress_pct"] = 10
         add_log(f"=== STAGE 1/3: MAKEMKV DISC EXTRACTION STARTED ({label}) ===")
 
-        for f in os.listdir(temp_raw):
-            fp = os.path.join(temp_raw, f)
+        for f in os.listdir(TEMP_RAW_DIR):
+            fp = os.path.join(TEMP_RAW_DIR, f)
             if os.path.isfile(fp):
                 try:
                     os.remove(fp)
@@ -335,8 +333,8 @@ def run_autorip_pipeline():
                     pass
 
         cmd_rip = [
-            config["makemkv_path"],
-            "-r", "mkv", "disc:0", "all", temp_raw,
+            MAKEMKV_PATH,
+            "-r", "mkv", "disc:0", "all", TEMP_RAW_DIR,
             f"--minlength={min_sec}"
         ]
 
@@ -357,7 +355,7 @@ def run_autorip_pipeline():
             elif "MSG:5005" in line_str or "MSG:5036" in line_str:
                 add_log("[MakeMKV] Disc track extraction completed successfully.")
             
-            raw_files = glob.glob(os.path.join(temp_raw, "*.mkv"))
+            raw_files = glob.glob(os.path.join(TEMP_RAW_DIR, "*.mkv"))
             if raw_files:
                 completed_count = len(raw_files)
                 state["progress_pct"] = min(10 + int((completed_count / 10.0) * 40), 48)
@@ -370,7 +368,7 @@ def run_autorip_pipeline():
             state["status_message"] = "MakeMKV Rip Failed"
             return
 
-        raw_files = sorted(glob.glob(os.path.join(temp_raw, "*.mkv")))
+        raw_files = sorted(glob.glob(os.path.join(TEMP_RAW_DIR, "*.mkv")))
         if not raw_files:
             add_log("[MakeMKV] No titles met the minimum length criteria.")
             state["stage"] = "COMPLETE"
@@ -421,11 +419,12 @@ def run_autorip_pipeline():
             state["current_file"] = target_filename
             state["status_message"] = f"Encoding Title {idx} of {len(target_files)} ({target_filename})..."
             
-            out_file = os.path.join(temp_encoded, target_filename)
+            out_file = os.path.join(TEMP_ENCODED_DIR, target_filename)
             add_log(f"[HandBrake] [{idx}/{len(target_files)}] Starting encode -> '{target_filename}'")
 
-            cmd_enc = [config["handbrake_path"], "-i", raw_file, "-o", out_file]
+            cmd_enc = [HANDBRAKE_PATH, "-i", raw_file, "-o", out_file]
             
+            # Preset & GPU Acceleration logic
             if "NVENC H.264" in preset:
                 cmd_enc.extend(["--encoder", "nvenc_h264", "--quality", "20", "--encoder-preset", "fast"])
             elif "NVENC H.265" in preset:
@@ -472,33 +471,30 @@ def run_autorip_pipeline():
             else:
                 add_log(f"[HandBrake] Encoding failed for title {idx}.")
 
-        # --- STEP 3: TRANSFERRING TO DESTINATION ---
+        # --- STEP 3: TRANSFERRING TO NAS ---
         state["stage"] = "TRANSFERRING"
-        add_log(f"=== STAGE 3/3: TRANSFERRING {len(encoded_files)} FILE(S) TO DESTINATION ===")
-        state["status_message"] = f"Moving {len(encoded_files)} file(s)..."
+        add_log(f"=== STAGE 3/3: TRANSFERRING {len(encoded_files)} FILE(S) TO NAS ===")
+        state["status_message"] = f"Moving {len(encoded_files)} file(s) to NAS..."
         state["progress_pct"] = 95
-
-        dest_base_tv = state["settings"].get("tv_destination") or config["tv_destination"]
-        dest_base_movie = state["settings"].get("movie_destination") or config["movie_destination"]
 
         if state["settings"]["auto_rename"]:
             if media_type == "movie":
-                dest_folder = os.path.join(dest_base_movie, f"{movie_title} ({year})")
+                nas_folder = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
             else:
-                dest_folder = os.path.join(dest_base_tv, f"{show_name} ({year})", f"Season {season:02d}")
+                nas_folder = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
         else:
-            dest_folder = os.path.join(dest_base_tv, "Uncategorized")
+            nas_folder = os.path.join(DEFAULT_TV_DESTINATION, "Uncategorized")
             
-        os.makedirs(dest_folder, exist_ok=True)
-        add_log(f"[Destination] Directory: {dest_folder}")
+        os.makedirs(nas_folder, exist_ok=True)
+        add_log(f"[NAS] Destination Directory: {nas_folder}")
 
         moved_names = []
         for ef in encoded_files:
-            dest = os.path.join(dest_folder, os.path.basename(ef))
+            dest = os.path.join(nas_folder, os.path.basename(ef))
             size_mb = round(os.path.getsize(ef) / (1024 * 1024), 1)
             shutil.move(ef, dest)
             moved_names.append(os.path.basename(ef))
-            add_log(f"[Transfer] Moved '{os.path.basename(ef)}' ({size_mb} MB) -> {dest}")
+            add_log(f"[NAS Transfer] Moved '{os.path.basename(ef)}' ({size_mb} MB) -> {dest}")
 
         if media_type == "tv" and state["settings"]["auto_rename"]:
             state["settings"]["start_episode"] = start_ep + len(encoded_files)
@@ -506,7 +502,7 @@ def run_autorip_pipeline():
 
         # --- STEP 4: COMPLETE & EJECT ---
         state["stage"] = "COMPLETE"
-        state["status_message"] = f"Finished! {len(encoded_files)} file(s) saved."
+        state["status_message"] = f"Finished! {len(encoded_files)} file(s) saved to NAS."
         state["progress_pct"] = 100
         state["fps"] = "0"
         state["eta"] = "--:--"
@@ -519,24 +515,27 @@ def run_autorip_pipeline():
             "media_type": media_type.upper(),
             "disc_type": state["disc_type"],
             "episodes_saved": len(encoded_files),
-            "destination": dest_folder,
+            "destination": nas_folder,
             "duration_min": duration_min
         })
 
+        trigger_plex_refresh()
+
+        # Send Discord Webhook Embed Notification
         send_discord_notification(
             title=f"🎉 Disc Processing Complete: {label}",
-            description=f"Successfully ripped and encoded **{len(encoded_files)} episode(s)** in **{duration_min} minutes**!",
+            description=f"Successfully ripped and encoded **{len(encoded_files)} episode(s)** to NAS in **{duration_min} minutes**!",
             poster_url=state["artwork_url"],
             fields=[
                 {"name": "Media Target", "value": f"{show_name if media_type=='tv' else movie_title} ({year})", "inline": True},
                 {"name": "Disc Type", "value": state["disc_type"], "inline": True},
-                {"name": "Destination", "value": f"`{dest_folder}`", "inline": False},
+                {"name": "Destination", "value": f"`{nas_folder}`", "inline": False},
                 {"name": "Episodes Saved", "value": "\n".join([f"• `{n}`" for n in moved_names[:5]]) + (f"\n*...and {len(moved_names)-5} more*" if len(moved_names)>5 else ""), "inline": False}
             ]
         )
 
         if state["settings"]["auto_eject"]:
-            add_log(f"Ejecting drive {state['drive_letter']}...")
+            add_log("Ejecting drive D:...")
             subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
             state["disc_present"] = False
             state["disc_label"] = "Ejected"
@@ -573,38 +572,37 @@ def add_header(response):
 
 @app.route("/api/status")
 def get_status():
-    dest_files = []
+    nas_files = []
     media_type = state["settings"]["media_type"]
     show_name = state["settings"]["show_name"]
     movie_title = state["settings"]["movie_title"]
     year = state["settings"]["release_year"]
     season = state["settings"]["season_number"]
 
-    dest_base_tv = state["settings"].get("tv_destination") or config["tv_destination"]
-    dest_base_movie = state["settings"].get("movie_destination") or config["movie_destination"]
-
     if media_type == "movie":
-        target_dir = os.path.join(dest_base_movie, f"{movie_title} ({year})")
+        target_nas_dir = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
+    elif media_type == "ps3":
+        target_nas_dir = DEFAULT_PS3_DESTINATION
     else:
-        target_dir = os.path.join(dest_base_tv, f"{show_name} ({year})", f"Season {season:02d}")
+        target_nas_dir = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
 
-    if os.path.exists(target_dir):
+    if os.path.exists(target_nas_dir):
         files_with_time = []
-        for f in os.listdir(target_dir):
-            fp = os.path.join(target_dir, f)
+        for f in os.listdir(target_nas_dir):
+            fp = os.path.join(target_nas_dir, f)
             if os.path.isfile(fp):
                 files_with_time.append((f, os.path.getmtime(fp), round(os.path.getsize(fp) / (1024 * 1024), 1)))
         
         files_with_time.sort(key=lambda x: x[1], reverse=True)
         for f, mtime, size_mb in files_with_time[:20]:
-            dest_files.append({"name": f, "size_mb": size_mb})
+            nas_files.append({"name": f, "size_mb": size_mb})
                 
     state_copy = dict(state)
     state_copy["logs"] = state["logs"][-50:] if state["logs"] else ["System ready - waiting for process logs..."]
 
     return jsonify({
         "state": state_copy,
-        "nas_files": dest_files,
+        "nas_files": nas_files,
         "history": load_history()
     })
 
@@ -630,7 +628,7 @@ def eject_drive():
     subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
     state["disc_present"] = False
     state["disc_label"] = "Ejected"
-    add_log(f"Drive {state['drive_letter']} ejected manually.")
+    add_log("Drive D: ejected manually.")
     return jsonify({"status": "success", "message": "Drive ejected"})
 
 @app.route("/api/settings", methods=["POST"])
