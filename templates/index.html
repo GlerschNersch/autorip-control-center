@@ -402,11 +402,12 @@
         </div>
 
         <div class="stats-bar">
-          <div class="stat-item"><i data-lucide="timer" style="width: 13px; color: var(--accent-amber);"></i> <span class="stat-value" id="statElapsed" style="color: var(--accent-amber);">00:00:00</span></div>
+          <div class="stat-item"><i data-lucide="timer" style="width: 13px; color: var(--accent-amber);"></i> Elapsed: <span class="stat-value" id="statElapsed" style="color: var(--accent-amber);">00:00:00</span></div>
           <div class="stat-item"><i data-lucide="gauge" style="width: 13px;"></i> <span class="stat-value" id="statFps">0</span> FPS</div>
-          <div class="stat-item"><i data-lucide="clock" style="width: 13px;"></i> ETA: <span class="stat-value" id="statEta">--:--</span></div>
-          <div class="stat-item"><i data-lucide="file-video" style="width: 13px;"></i> <span class="stat-value" id="statTarget">--</span></div>
+          <div class="stat-item"><i data-lucide="clock" style="width: 13px;"></i> File ETA: <span class="stat-value" id="statEta">--:--</span></div>
+          <div class="stat-item"><i data-lucide="sparkles" style="width: 13px; color: var(--accent-emerald);"></i> Total ETA: <span class="stat-value" id="statOverallEta" style="color: var(--accent-emerald);">--:--</span></div>
         </div>
+
       </div>
 
       <div class="console" id="consoleBox">
@@ -600,7 +601,8 @@
 
       document.getElementById('statFps').innerText = state.fps || '0';
       document.getElementById('statEta').innerText = state.eta || '--:--';
-      document.getElementById('statTarget').innerText = state.current_file || '--';
+      document.getElementById('statOverallEta').innerText = state.overall_eta || '--:--';
+
 
       if (['RIPPING', 'ENCODING', 'TRANSFERRING'].includes(state.stage)) {
         btnStart.disabled = true;
