@@ -311,10 +311,10 @@
         </div>
 
         <div class="poster-box">
-          <img src="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&q=80" id="posterImg" class="poster-img" alt="Poster Artwork">
+          <img src="https://static.tvmaze.com/uploads/images/original_untouched/633/1582667.jpg" id="posterImg" class="poster-img" alt="Poster Artwork">
           <div class="media-meta">
             <h2 id="mediaHeaderTitle">Avatar: The Last Airbender (2005)</h2>
-            <p id="mediaHeaderSummary">A young boy known as the Avatar must master the four elemental powers to save a world at war...</p>
+            <p id="mediaHeaderSummary">A young boy known as the Avatar must master the four elemental powers to save a world at war.</p>
             <div class="collection-matrix" id="collectionMatrix">
               <div class="matrix-pill done"><i data-lucide="check-circle" style="width: 11px;"></i> Book 1</div>
               <div class="matrix-pill active"><i data-lucide="disc" style="width: 11px;" class="spin"></i> Disc 1</div>
@@ -807,6 +807,7 @@
       await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     }
 
+    document.addEventListener('DOMContentLoaded', fetchStatus);
     setInterval(fetchStatus, 1500);
     fetchStatus();
   </script>

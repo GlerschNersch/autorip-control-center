@@ -35,8 +35,8 @@ state = {
     "current_title": 0,
     "total_titles": 0,
     "drive_letter": "D:",
-    "disc_label": "No Disc Detected",
-    "disc_present": False,
+    "disc_label": "Avatar_Book_1_Disc_1",
+    "disc_present": True,
     "disc_type": "DVD",          # DVD or Blu-ray
     "fps": "0",
     "eta": "--:--",
@@ -44,8 +44,8 @@ state = {
     "start_timestamp": 0,
     "auto_start_countdown": 0,
     "auto_start_enabled": True,
-    "artwork_url": "",
-    "media_summary": "",
+    "artwork_url": "https://static.tvmaze.com/uploads/images/original_untouched/633/1582667.jpg",
+    "media_summary": "A young boy known as the Avatar must master the four elemental powers to save a world at war.",
     "nas_storage": {"free_gb": 0, "total_gb": 0, "used_pct": 0},
     "logs": [f"{time.strftime('[%H:%M:%S]')} System Ready - AutoRip Control Center Online"],
     "settings": {
@@ -247,6 +247,9 @@ def parse_disc_label_media(label):
         pass
 
 def check_drive_status():
+    if state["stage"] in ["RIPPING", "ENCODING", "TRANSFERRING"]:
+        return
+
     drive = state["drive_letter"][0]
     previous_disc_present = state["disc_present"]
     try:
