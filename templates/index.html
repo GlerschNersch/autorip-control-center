@@ -313,11 +313,11 @@
         <div class="poster-box">
           <img src="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&q=80" id="posterImg" class="poster-img" alt="Poster Artwork">
           <div class="media-meta">
-            <h2 id="mediaHeaderTitle">TaleSpin (1990)</h2>
-            <p id="mediaHeaderSummary">Baloo the Bear stars in air cargo adventures in Cape Suzette.</p>
+            <h2 id="mediaHeaderTitle">Avatar: The Last Airbender (2005)</h2>
+            <p id="mediaHeaderSummary">A young boy known as the Avatar must master the four elemental powers to save a world at war...</p>
             <div class="collection-matrix" id="collectionMatrix">
-              <div class="matrix-pill done"><i data-lucide="check-circle" style="width: 11px;"></i> Vol 1</div>
-              <div class="matrix-pill active"><i data-lucide="disc" style="width: 11px;" class="spin"></i> Vol 2 D1</div>
+              <div class="matrix-pill done"><i data-lucide="check-circle" style="width: 11px;"></i> Book 1</div>
+              <div class="matrix-pill active"><i data-lucide="disc" style="width: 11px;" class="spin"></i> Disc 1</div>
             </div>
           </div>
         </div>
@@ -329,7 +329,7 @@
               <span id="barcodeStatus" style="font-size: 0.65rem; color: var(--accent-emerald);">Ready</span>
             </label>
             <div style="display: flex; gap: 0.35rem;">
-              <input type="text" id="barcodeInput" placeholder="Scan/type UPC (e.g. 786936239126)" oninput="if(this.value.trim().length>=12) lookupBarcode(this.value.trim())" onkeydown="if(event.key==='Enter') lookupBarcode()">
+              <input type="text" id="barcodeInput" placeholder="Scan/type UPC (e.g. 786936239126)" oninput="if(this.value.trim().length>=8) lookupBarcode(this.value.trim())" onkeydown="if(event.key==='Enter') lookupBarcode()">
               <button class="btn btn-secondary" style="padding: 0.35rem 0.55rem;" onclick="openWebcamScanner()" title="Open Live Webcam Barcode Scanner">
                 <i data-lucide="camera" style="width: 14px;"></i>
               </button>
@@ -347,7 +347,7 @@
 
           <div class="input-group" id="groupTvName">
             <label>TV Show Name</label>
-            <input type="text" id="settingShowName" value="TaleSpin" onchange="saveSettings()">
+            <input type="text" id="settingShowName" value="Avatar: The Last Airbender" onchange="saveSettings()">
           </div>
 
           <div class="input-group" id="groupMovieTitle" style="display: none;">
@@ -358,7 +358,7 @@
           <div class="input-row">
             <div class="input-group">
               <label>Year</label>
-              <input type="text" id="settingYear" value="1990" onchange="saveSettings()">
+              <input type="text" id="settingYear" value="2005" onchange="saveSettings()">
             </div>
             <div class="input-group" id="groupTvSeason">
               <label>Season</label>
@@ -368,7 +368,7 @@
 
           <div class="input-group" id="groupTvStartEp">
             <label>Start Episode #</label>
-            <input type="number" id="settingStartEp" value="27" onchange="saveSettings()">
+            <input type="number" id="settingStartEp" value="1" onchange="saveSettings()">
           </div>
         </div>
       </div>
@@ -743,20 +743,18 @@
       consoleBox.innerHTML = state.logs.map(l => `<div class="console-line">${l}</div>`).join('');
       consoleBox.scrollTop = consoleBox.scrollHeight;
 
-      if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
-        document.getElementById('settingMediaType').value = state.settings.media_type || 'tv';
-        document.getElementById('settingShowName').value = state.settings.show_name || 'TaleSpin';
-        document.getElementById('settingMovieTitle').value = state.settings.movie_title || 'DuckTales The Movie';
-        document.getElementById('settingYear').value = state.settings.release_year || '1990';
-        document.getElementById('settingSeason').value = state.settings.season_number || 1;
-        document.getElementById('settingStartEp').value = state.settings.start_episode || 27;
-        document.getElementById('settingPreset').value = state.settings.preset || 'Auto';
-        document.getElementById('settingFormat').value = state.settings.format || 'mp4';
-        document.getElementById('settingEpTitles').value = (state.settings.include_episode_titles !== false).toString();
-        document.getElementById('settingEject').value = state.settings.auto_eject.toString();
-        document.getElementById('settingDiscordWebhook').value = state.settings.discord_webhook_url || '';
-        toggleMediaFields();
-      }
+      document.getElementById('settingMediaType').value = state.settings.media_type || 'tv';
+      document.getElementById('settingShowName').value = state.settings.show_name || '';
+      document.getElementById('settingMovieTitle').value = state.settings.movie_title || '';
+      document.getElementById('settingYear').value = state.settings.release_year || '';
+      document.getElementById('settingSeason').value = state.settings.season_number || 1;
+      document.getElementById('settingStartEp').value = state.settings.start_episode || 1;
+      document.getElementById('settingPreset').value = state.settings.preset || 'NVIDIA NVENC H.264';
+      document.getElementById('settingFormat').value = state.settings.format || 'mp4';
+      document.getElementById('settingEpTitles').value = (state.settings.include_episode_titles !== false).toString();
+      document.getElementById('settingEject').value = state.settings.auto_eject.toString();
+      document.getElementById('settingDiscordWebhook').value = state.settings.discord_webhook_url || '';
+      toggleMediaFields();
 
       const fileList = document.getElementById('fileList');
       if (!nas_files || nas_files.length === 0) {
