@@ -49,16 +49,16 @@ state = {
     "nas_storage": {"free_gb": 0, "total_gb": 0, "used_pct": 0},
     "logs": [f"{time.strftime('[%H:%M:%S]')} System Ready - AutoRip Control Center Online"],
     "settings": {
-        "media_type": "movie",     # tv, movie, or ps3
+        "media_type": "tv",       # tv, movie, or ps3
         "format": "mp4",          # mp4 or mkv
         "preset": "NVIDIA NVENC H.264",
         "min_length_sec": 600,
         "auto_eject": True,
         "auto_rename": True,
         "include_episode_titles": True,
-        "show_name": "Darkwing Duck",
+        "show_name": "Avatar: The Last Airbender",
         "movie_title": "Dragon Ball Z Dead Zone",
-        "release_year": "1989",
+        "release_year": "2005",
         "season_number": 1,
         "start_episode": 1,
         "discord_webhook_url": "",
@@ -746,6 +746,88 @@ def update_settings():
             
     threading.Thread(target=fetch_media_artwork, daemon=True).start()
     return jsonify({"status": "success", "settings": state["settings"]})
+
+@app.route("/api/barcode-lookup", methods=["POST"])
+def barcode_lookup():
+    data = request.json or {}
+    upc_raw = data.get("upc", "").strip()
+    if not upc_raw:
+        return jsonify({"status": "error", "message": "No UPC provided"}), 400
+
+    if len(upc_raw) < 12 and upc_raw.isdigit():
+        upc = upc_raw.zfill(12)
+    else:
+        upc = upc_raw
+
+    add_log(f"[Barcode Engine] Looking up UPC Barcode: {upc_raw} (Padded: {upc})...")
+    
+    # 1. Query UPCItemDB API
+    try:
+        url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={upc}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        res = urllib.request.urlopen(req, timeout=4)
+        item_data = json.loads(res.read().decode())
+        items = item_data.get("items", [])
+        if items:
+            title = items[0].get("title", "")
+            add_log(f"[Barcode Engine] Found UPCItemDB Title: '{title}'")
+            
+            clean_title = title
+            for sub in ["(Blu-ray)", "(DVD)", "[Blu-ray]", "[DVD]", "Blu-ray", "Blu Ray", "DVD", ": The Complete Series", "The Complete Series", "Complete Series", "Season", "Collection", "Box Set", "(4K)", "[4K]"]:
+                clean_title = clean_title.replace(sub, "")
+            clean_title = clean_title.strip(" :-()")
+            add_log(f"[Barcode Engine] Cleaned Search Query: '{clean_title}'")
+
+            # Query TVMaze or iTunes for media details
+            url_tv = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(clean_title)}"
+            try:
+                res_tv = urllib.request.urlopen(url_tv, timeout=3)
+                tv_data = json.loads(res_tv.read().decode())
+                if tv_data and "name" in tv_data:
+                    state["settings"]["media_type"] = "tv"
+                    state["settings"]["show_name"] = tv_data["name"]
+                    if "premiered" in tv_data and tv_data["premiered"]:
+                        state["settings"]["release_year"] = tv_data["premiered"].split("-")[0]
+                    fetch_media_artwork()
+                    return jsonify({"status": "success", "media_type": "tv", "title": tv_data["name"], "year": state["settings"]["release_year"], "artwork": state["artwork_url"]})
+            except Exception:
+                pass
+
+            # Try iTunes Movie Search
+            url_movie = f"https://itunes.apple.com/search?term={urllib.parse.quote(clean_title)}&entity=movie&limit=1"
+            try:
+                res_m = urllib.request.urlopen(url_movie, timeout=3)
+                m_data = json.loads(res_m.read().decode())
+                if m_data and "results" in m_data and len(m_data["results"]) > 0:
+                    m_item = m_data["results"][0]
+                    state["settings"]["media_type"] = "movie"
+                    state["settings"]["movie_title"] = m_item.get("trackName", clean_title)
+                    if "releaseDate" in m_item:
+                        state["settings"]["release_year"] = m_item["releaseDate"].split("-")[0]
+                    fetch_media_artwork()
+                    return jsonify({"status": "success", "media_type": "movie", "title": state["settings"]["movie_title"], "year": state["settings"]["release_year"], "artwork": state["artwork_url"]})
+            except Exception:
+                pass
+    except Exception as e:
+        add_log(f"[Barcode Engine] Note: {e}")
+
+    # 2. Fallback Direct Search
+    try:
+        url_movie = f"https://itunes.apple.com/search?term={urllib.parse.quote(upc)}&entity=movie&limit=1"
+        res_m = urllib.request.urlopen(url_movie, timeout=3)
+        m_data = json.loads(res_m.read().decode())
+        if m_data and "results" in m_data and len(m_data["results"]) > 0:
+            m_item = m_data["results"][0]
+            state["settings"]["media_type"] = "movie"
+            state["settings"]["movie_title"] = m_item.get("trackName", "")
+            if "releaseDate" in m_item:
+                state["settings"]["release_year"] = m_item["releaseDate"].split("-")[0]
+            fetch_media_artwork()
+            return jsonify({"status": "success", "media_type": "movie", "title": state["settings"]["movie_title"], "year": state["settings"]["release_year"], "artwork": state["artwork_url"]})
+    except Exception:
+        pass
+
+    return jsonify({"status": "error", "message": "Barcode not found in database. Please enter title manually."}), 404
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
