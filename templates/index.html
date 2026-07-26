@@ -329,7 +329,7 @@
               <span id="barcodeStatus" style="font-size: 0.65rem; color: var(--accent-emerald);">Ready</span>
             </label>
             <div style="display: flex; gap: 0.35rem;">
-              <input type="text" id="barcodeInput" placeholder="Scan/type UPC (e.g. 786936239126)" onkeydown="if(event.key==='Enter') lookupBarcode()">
+              <input type="text" id="barcodeInput" placeholder="Scan/type UPC (e.g. 786936239126)" oninput="if(this.value.trim().length>=12) lookupBarcode(this.value.trim())" onkeydown="if(event.key==='Enter') lookupBarcode()">
               <button class="btn btn-secondary" style="padding: 0.35rem 0.55rem;" onclick="openWebcamScanner()" title="Open Live Webcam Barcode Scanner">
                 <i data-lucide="camera" style="width: 14px;"></i>
               </button>
