@@ -49,16 +49,16 @@ state = {
     "nas_storage": {"free_gb": 0, "total_gb": 0, "used_pct": 0},
     "logs": [f"{time.strftime('[%H:%M:%S]')} System Ready - AutoRip Control Center Online"],
     "settings": {
-        "media_type": "tv",       # tv, movie, or ps3
+        "media_type": "movie",     # tv, movie, or ps3
         "format": "mp4",          # mp4 or mkv
-        "preset": "NVIDIA NVENC H.264", # Auto, HQ 720p30, HQ 1080p30, NVENC H.264, NVENC H.265, Intel QSV, AMD VCE
+        "preset": "NVIDIA NVENC H.264",
         "min_length_sec": 600,
         "auto_eject": True,
         "auto_rename": True,
         "include_episode_titles": True,
         "show_name": "Darkwing Duck",
-        "movie_title": "DuckTales The Movie",
-        "release_year": "1991",
+        "movie_title": "Dragon Ball Z Dead Zone",
+        "release_year": "1989",
         "season_number": 1,
         "start_episode": 1,
         "discord_webhook_url": "",
@@ -176,12 +176,40 @@ def check_nas_storage():
     except Exception:
         state["nas_storage"] = {"free_gb": 0, "total_gb": 0, "used_pct": 0}
 
+DBZ_MOVIES = {
+    "DRAGON_BALL_Z_MOVIE_1": ("Dragon Ball Z: Dead Zone", "1989"),
+    "DRAGON_BALL_Z_MOVIE_2": ("Dragon Ball Z: The World's Strongest", "1990"),
+    "DRAGON_BALL_Z_MOVIE_3": ("Dragon Ball Z: The Tree of Might", "1990"),
+    "DRAGON_BALL_Z_MOVIE_4": ("Dragon Ball Z: Lord Slug", "1991"),
+    "DRAGON_BALL_Z_MOVIE_5": ("Dragon Ball Z: Cooler's Revenge", "1991"),
+    "DRAGON_BALL_Z_MOVIE_6": ("Dragon Ball Z: The Return of Cooler", "1992"),
+    "DRAGON_BALL_Z_MOVIE_7": ("Dragon Ball Z: Super Android 13!", "1992"),
+    "DRAGON_BALL_Z_MOVIE_8": ("Dragon Ball Z: Broly - The Legendary Super Saiyan", "1993"),
+    "DRAGON_BALL_Z_MOVIE_9": ("Dragon Ball Z: Bojack Unbound", "1993"),
+    "DRAGON_BALL_Z_MOVIE_10": ("Dragon Ball Z: Broly - Second Coming", "1994"),
+    "DRAGON_BALL_Z_MOVIE_11": ("Dragon Ball Z: Bio-Broly", "1994"),
+    "DRAGON_BALL_Z_MOVIE_12": ("Dragon Ball Z: Fusion Reborn", "1995"),
+    "DRAGON_BALL_Z_MOVIE_13": ("Dragon Ball Z: Wrath of the Dragon", "1995"),
+}
+
 def parse_disc_label_media(label):
     if not label or label in ["Empty Drive / No Disc", "Ejected", "Drive Error / Empty"]:
         return
-    
+
+    # 1. Direct DBZ & Known Franchise Dictionary Check
+    upper_label = label.upper().strip()
+    if upper_label in DBZ_MOVIES:
+        title, year = DBZ_MOVIES[upper_label]
+        state["settings"]["media_type"] = "movie"
+        state["settings"]["movie_title"] = title
+        state["settings"]["release_year"] = year
+        add_log(f"[Auto-Detect] Recognized disc from Franchise Map: '{title}' ({year})")
+        fetch_media_artwork()
+        return
+
+    # 2. General Clean Query
     clean_label = label.replace("_", " ").replace(".", " ").replace("-", " ")
-    for word in ["VOLUME", "VOL", "DISC", "SEASON", "DES", "DVD", "BLURAY"]:
+    for word in ["VOLUME", "VOL", "DISC", "SEASON", "DES", "DVD", "BLURAY", "MOVIE", "FEATURE", "SPECIAL", "EDITION"]:
         clean_label = clean_label.replace(word, " ").replace(word.lower(), " ")
         
     query = clean_label.strip()
