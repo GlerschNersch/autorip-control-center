@@ -251,7 +251,7 @@ def parse_disc_label_media(label):
 
 
 def check_drive_status():
-    if state["stage"] in ["RIPPING", "ENCODING", "TRANSFERRING"]:
+    if state["stage"] != "IDLE" or process_lock.locked():
         return
 
     drive = state["drive_letter"][0]
@@ -697,7 +697,7 @@ def drive_poller_thread():
     last_raw_bytes = 0
     last_check_time = time.time()
     while True:
-        time.sleep(1.5)
+        time.sleep(2.5)
         check_nas_storage()
         update_nas_files_cache()
 
@@ -722,8 +722,6 @@ def drive_poller_thread():
             if state["stage"] == "COMPLETE" and not state["disc_present"]:
                 state["stage"] = "IDLE"
                 state["status_message"] = "System Ready - Insert a disc to begin"
-
-
 
 threading.Thread(target=drive_poller_thread, daemon=True).start()
 
@@ -759,7 +757,6 @@ def start_pipeline():
     countdown_cancel_event.set()
     run_autorip_pipeline_async()
     return jsonify({"status": "success", "message": "Pipeline started"})
-
 
 @app.route("/api/cancel-autostart", methods=["POST"])
 def cancel_autostart():
@@ -801,7 +798,6 @@ def barcode_lookup():
     if not upc_raw:
         return jsonify({"status": "error", "message": "No UPC provided"}), 400
 
-    # Auto-pad short barcodes to 12 digits if 10 or 11 digits
     if len(upc_raw) < 12 and upc_raw.isdigit():
         upc = upc_raw.zfill(12)
     else:
@@ -826,7 +822,6 @@ def barcode_lookup():
             clean_title = clean_title.strip(" :-()")
             add_log(f"[Barcode Engine] Cleaned Search Query: '{clean_title}'")
 
-            
             # Query TVMaze or iTunes for media details
             url_tv = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(clean_title)}"
             try:
@@ -877,7 +872,6 @@ def barcode_lookup():
         pass
 
     return jsonify({"status": "error", "message": "Barcode not found in database. Please enter title manually."}), 404
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
