@@ -35,26 +35,29 @@ state = {
     "current_title": 0,
     "total_titles": 0,
     "drive_letter": "D:",
-    "disc_label": "Avatar_Book_1_Disc_1",
+    "disc_label": "No Disc Detected",
     "disc_present": False,
     "disc_type": "DVD",          # DVD or Blu-ray
     "fps": "0",
     "eta": "--:--",
     "overall_eta": "--:--",
     "start_timestamp": 0,
+
     "auto_start_countdown": 0,
     "auto_start_enabled": True,
     "artwork_url": "https://static.tvmaze.com/uploads/images/original_untouched/633/1582667.jpg",
     "media_summary": "A young boy known as the Avatar must master the four elemental powers to save a world at war.",
     "nas_storage": {"free_gb": 0, "total_gb": 0, "used_pct": 0},
+
     "logs": [f"{time.strftime('[%H:%M:%S]')} System Ready - AutoRip Control Center Online"],
     "settings": {
-        "media_type": "tv",       # tv, movie, or ps3
+        "media_type": "tv",       # tv or movie
         "format": "mp4",          # mp4 or mkv
-        "preset": "NVIDIA NVENC H.264",
+        "preset": "Auto",         # Auto, HQ 720p30 Surround, HQ 1080p30 Surround, NVENC H.264, NVENC H.265, Intel QSV, AMD VCE
         "min_length_sec": 300,
         "auto_eject": True,
         "auto_rename": True,
+
         "include_episode_titles": True,
         "show_name": "Avatar: The Last Airbender",
         "movie_title": "Dragon Ball Z Dead Zone",
@@ -110,7 +113,7 @@ def fetch_media_artwork():
             if data and "summary" in data and data["summary"]:
                 summary = data["summary"].replace("<p>", "").replace("</p>", "").replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
                 state["media_summary"] = summary
-        elif media_type == "movie":
+        else:
             query = state["settings"]["movie_title"]
             url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=movie&limit=1"
             req = urllib.request.urlopen(url, timeout=3)
@@ -246,6 +249,7 @@ def parse_disc_label_media(label):
     except Exception:
         pass
 
+
 def check_drive_status():
     if state["stage"] in ["RIPPING", "ENCODING", "TRANSFERRING"]:
         return
@@ -274,6 +278,7 @@ def check_drive_status():
         state["disc_label"] = "Drive Error / Empty"
         state["disc_present"] = False
         state["disc_type"] = "Unknown"
+
 
     if not previous_disc_present and state["disc_present"] and state["stage"] == "IDLE" and state["auto_start_enabled"]:
         trigger_auto_start_countdown()
@@ -347,6 +352,7 @@ def run_autorip_pipeline():
             state["status_message"] = "No disc in drive - Push disc tray in"
             return
 
+
         label = state["disc_label"]
         fmt = state["settings"]["format"]
         media_type = state["settings"]["media_type"]
@@ -392,6 +398,7 @@ def run_autorip_pipeline():
             return
 
         if media_type == "movie":
+
             min_sec = max(state["settings"]["min_length_sec"], 1800)
         else:
             min_sec = state["settings"]["min_length_sec"]
@@ -442,6 +449,7 @@ def run_autorip_pipeline():
             if raw_files:
                 completed_count = len(raw_files)
                 state["progress_pct"] = min(10 + int((completed_count / 10.0) * 40), 48)
+                state["status_message"] = f"Ripping track {completed_count} with MakeMKV..."
 
         p_rip.wait()
         if p_rip.returncode != 0:
@@ -563,6 +571,7 @@ def run_autorip_pipeline():
                                             state["overall_eta"] = f"{m:02d}:{s:02d}"
                                     except Exception:
                                         pass
+
                     except Exception:
                         pass
 
@@ -609,7 +618,6 @@ def run_autorip_pipeline():
         state["progress_pct"] = 100
         state["fps"] = "0"
         state["eta"] = "--:--"
-        state["overall_eta"] = "--:--"
         state["start_timestamp"] = 0
 
         duration_min = round((time.time() - start_time) / 60, 1)
@@ -715,6 +723,8 @@ def drive_poller_thread():
                 state["stage"] = "IDLE"
                 state["status_message"] = "System Ready - Insert a disc to begin"
 
+
+
 threading.Thread(target=drive_poller_thread, daemon=True).start()
 
 # --- Routes ---
@@ -749,6 +759,7 @@ def start_pipeline():
     countdown_cancel_event.set()
     run_autorip_pipeline_async()
     return jsonify({"status": "success", "message": "Pipeline started"})
+
 
 @app.route("/api/cancel-autostart", methods=["POST"])
 def cancel_autostart():
@@ -790,6 +801,7 @@ def barcode_lookup():
     if not upc_raw:
         return jsonify({"status": "error", "message": "No UPC provided"}), 400
 
+    # Auto-pad short barcodes to 12 digits if 10 or 11 digits
     if len(upc_raw) < 12 and upc_raw.isdigit():
         upc = upc_raw.zfill(12)
     else:
@@ -814,6 +826,7 @@ def barcode_lookup():
             clean_title = clean_title.strip(" :-()")
             add_log(f"[Barcode Engine] Cleaned Search Query: '{clean_title}'")
 
+            
             # Query TVMaze or iTunes for media details
             url_tv = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(clean_title)}"
             try:
@@ -864,6 +877,7 @@ def barcode_lookup():
         pass
 
     return jsonify({"status": "error", "message": "Barcode not found in database. Please enter title manually."}), 404
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
