@@ -334,11 +334,17 @@ def run_autorip_pipeline():
 
         state["logs"] = [f"{time.strftime('[%H:%M:%S]')} === Starting AutoRip Pipeline ==="]
 
-        check_drive_status()
+        for attempt in range(1, 4):
+            check_drive_status()
+            if state["disc_present"]:
+                break
+            add_log(f"Waiting for drive D: volume mount (Attempt {attempt}/3)...")
+            time.sleep(2)
+
         if not state["disc_present"]:
-            add_log("No disc detected in drive D:. Aborting.")
+            add_log("No disc detected in drive D:. Please ensure disc is pushed in fully.")
             state["stage"] = "ERROR"
-            state["status_message"] = "No disc in drive"
+            state["status_message"] = "No disc in drive - Push disc tray in"
             return
 
         label = state["disc_label"]
@@ -646,6 +652,38 @@ def run_autorip_pipeline():
     finally:
         process_lock.release()
 
+cached_nas_files = []
+
+def update_nas_files_cache():
+    global cached_nas_files
+    try:
+        media_type = state["settings"]["media_type"]
+        show_name = state["settings"]["show_name"]
+        movie_title = state["settings"]["movie_title"]
+        year = state["settings"]["release_year"]
+        season = state["settings"]["season_number"]
+
+        if media_type == "movie":
+            target_nas_dir = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
+        elif media_type == "ps3":
+            target_nas_dir = DEFAULT_PS3_DESTINATION
+        else:
+            target_nas_dir = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
+
+        if os.path.exists(target_nas_dir):
+            files_with_time = []
+            for f in os.listdir(target_nas_dir):
+                fp = os.path.join(target_nas_dir, f)
+                if os.path.isfile(fp):
+                    files_with_time.append((f, os.path.getmtime(fp), round(os.path.getsize(fp) / (1024 * 1024), 1)))
+            
+            files_with_time.sort(key=lambda x: x[1], reverse=True)
+            cached_nas_files = [{"name": f, "size_mb": size_mb} for f, mtime, size_mb in files_with_time[:20]]
+        else:
+            cached_nas_files = []
+    except Exception:
+        pass
+
 # --- Background Poller ---
 def drive_poller_thread():
     last_raw_bytes = 0
@@ -653,6 +691,7 @@ def drive_poller_thread():
     while True:
         time.sleep(1.5)
         check_nas_storage()
+        update_nas_files_cache()
 
         if state["stage"] == "RIPPING":
             raw_dir = TEMP_RAW_DIR
@@ -692,37 +731,12 @@ def add_header(response):
 
 @app.route("/api/status")
 def get_status():
-    nas_files = []
-    media_type = state["settings"]["media_type"]
-    show_name = state["settings"]["show_name"]
-    movie_title = state["settings"]["movie_title"]
-    year = state["settings"]["release_year"]
-    season = state["settings"]["season_number"]
-
-    if media_type == "movie":
-        target_nas_dir = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
-    elif media_type == "ps3":
-        target_nas_dir = DEFAULT_PS3_DESTINATION
-    else:
-        target_nas_dir = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
-
-    if os.path.exists(target_nas_dir):
-        files_with_time = []
-        for f in os.listdir(target_nas_dir):
-            fp = os.path.join(target_nas_dir, f)
-            if os.path.isfile(fp):
-                files_with_time.append((f, os.path.getmtime(fp), round(os.path.getsize(fp) / (1024 * 1024), 1)))
-        
-        files_with_time.sort(key=lambda x: x[1], reverse=True)
-        for f, mtime, size_mb in files_with_time[:20]:
-            nas_files.append({"name": f, "size_mb": size_mb})
-                
     state_copy = dict(state)
     state_copy["logs"] = state["logs"][-50:] if state["logs"] else ["System ready - waiting for process logs..."]
 
     return jsonify({
         "state": state_copy,
-        "nas_files": nas_files,
+        "nas_files": cached_nas_files,
         "history": load_history()
     })
 
@@ -731,6 +745,7 @@ def start_pipeline():
     if state["stage"] in ["RIPPING", "ENCODING", "TRANSFERRING"]:
         return jsonify({"status": "error", "message": "Pipeline is already running"}), 400
     
+    state["disc_present"] = True
     countdown_cancel_event.set()
     run_autorip_pipeline_async()
     return jsonify({"status": "success", "message": "Pipeline started"})

@@ -455,7 +455,7 @@
       </div>
 
       <div class="console" id="consoleBox">
-        <div class="console-line">Connecting to AutoRip Control Center...</div>
+        <div class="console-line">System Ready - AutoRip Control Center Online</div>
       </div>
     </div>
 
@@ -543,14 +543,18 @@
     let previousStage = 'IDLE';
     let currentStartTimestamp = 0;
 
+    let activeTimerSeconds = 0;
+    let timerInterval = null;
+
     setInterval(() => {
-      if (currentStartTimestamp > 0) {
-        const elapsedSec = Math.max(0, Math.floor(Date.now() / 1000 - currentStartTimestamp));
-        const hrs = Math.floor(elapsedSec / 3600);
-        const mins = Math.floor((elapsedSec % 3600) / 60);
-        const secs = elapsedSec % 60;
+      if (['RIPPING', 'ENCODING', 'TRANSFERRING'].includes(previousStage)) {
+        activeTimerSeconds++;
+        const hrs = Math.floor(activeTimerSeconds / 3600);
+        const mins = Math.floor((activeTimerSeconds % 3600) / 60);
+        const secs = activeTimerSeconds % 60;
         document.getElementById('statElapsed').innerText = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
       } else {
+        activeTimerSeconds = 0;
         document.getElementById('statElapsed').innerText = '--:--:--';
       }
     }, 1000);
@@ -765,20 +769,23 @@
       else if (state.stage === 'COMPLETE') { s1.className = 'step-item done'; s2.className = 'step-item done'; s3.className = 'step-item done'; s4.className = 'step-item done'; }
 
       const consoleBox = document.getElementById('consoleBox');
-      consoleBox.innerHTML = state.logs.map(l => `<div class="console-line">${l}</div>`).join('');
-      consoleBox.scrollTop = consoleBox.scrollHeight;
+      if (consoleBox && state.logs) {
+        consoleBox.innerHTML = state.logs.map(l => `<div class="console-line">${l}</div>`).join('');
+        consoleBox.scrollTop = consoleBox.scrollHeight;
+      }
 
-      document.getElementById('settingMediaType').value = state.settings.media_type || 'tv';
-      document.getElementById('settingShowName').value = state.settings.show_name || '';
-      document.getElementById('settingMovieTitle').value = state.settings.movie_title || '';
-      document.getElementById('settingYear').value = state.settings.release_year || '';
-      document.getElementById('settingSeason').value = state.settings.season_number || 1;
-      document.getElementById('settingStartEp').value = state.settings.start_episode || 1;
-      document.getElementById('settingPreset').value = state.settings.preset || 'NVIDIA NVENC H.264';
-      document.getElementById('settingFormat').value = state.settings.format || 'mp4';
-      document.getElementById('settingEpTitles').value = (state.settings.include_episode_titles !== false).toString();
-      document.getElementById('settingEject').value = state.settings.auto_eject.toString();
-      document.getElementById('settingDiscordWebhook').value = state.settings.discord_webhook_url || '';
+      const setVal = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value = val; };
+      setVal('settingMediaType', state.settings.media_type || 'tv');
+      setVal('settingShowName', state.settings.show_name || '');
+      setVal('settingMovieTitle', state.settings.movie_title || '');
+      setVal('settingYear', state.settings.release_year || '');
+      setVal('settingSeason', state.settings.season_number || 1);
+      setVal('settingStartEp', state.settings.start_episode || 1);
+      setVal('settingPreset', state.settings.preset || 'NVIDIA NVENC H.264');
+      setVal('settingFormat', state.settings.format || 'mp4');
+      setVal('settingEpTitles', (state.settings.include_episode_titles !== false).toString());
+      setVal('settingEject', (state.settings.auto_eject !== false).toString());
+      setVal('settingDiscordWebhook', state.settings.discord_webhook_url || '');
       toggleMediaFields();
 
       const fileList = document.getElementById('fileList');
