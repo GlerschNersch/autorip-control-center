@@ -36,7 +36,7 @@ state = {
     "total_titles": 0,
     "drive_letter": "D:",
     "disc_label": "Avatar_Book_1_Disc_1",
-    "disc_present": True,
+    "disc_present": False,
     "disc_type": "DVD",          # DVD or Blu-ray
     "fps": "0",
     "eta": "--:--",
@@ -52,7 +52,7 @@ state = {
         "media_type": "tv",       # tv, movie, or ps3
         "format": "mp4",          # mp4 or mkv
         "preset": "NVIDIA NVENC H.264",
-        "min_length_sec": 600,
+        "min_length_sec": 300,
         "auto_eject": True,
         "auto_rename": True,
         "include_episode_titles": True,
