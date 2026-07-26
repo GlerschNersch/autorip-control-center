@@ -551,10 +551,14 @@ def run_autorip_pipeline():
 # --- Background Poller ---
 def drive_poller_thread():
     while True:
-        time.sleep(3)
+        time.sleep(2)
         check_nas_storage()
-        if state["stage"] in ["IDLE", "COUNTDOWN"]:
+        if state["stage"] in ["IDLE", "COUNTDOWN", "COMPLETE"]:
             check_drive_status()
+            if state["stage"] == "COMPLETE" and not state["disc_present"]:
+                state["stage"] = "IDLE"
+                state["status_message"] = "System Ready - Insert a disc to begin"
+
 
 threading.Thread(target=drive_poller_thread, daemon=True).start()
 
