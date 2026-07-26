@@ -279,6 +279,27 @@
     <button class="btn btn-warning" onclick="cancelAutoStart()"><i data-lucide="x" style="width: 12px;"></i> Cancel</button>
   </div>
 
+  <!-- Webcam Barcode Scanner Modal -->
+  <div id="webcamModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 9999; align-items: center; justify-content: center;">
+    <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; width: 90%; max-width: 480px; padding: 1.2rem; display: flex; flex-direction: column; gap: 0.8rem; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 0.4rem;">
+          <i data-lucide="camera" style="color: var(--accent-cyan);"></i> Live Webcam Barcode Scanner
+        </h3>
+        <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem;" onclick="closeWebcamScanner()"><i data-lucide="x" style="width: 14px;"></i></button>
+      </div>
+
+      <div style="position: relative; width: 100%; height: 260px; background: #000; border-radius: 10px; overflow: hidden; border: 2px dashed var(--accent-cyan); display: flex; align-items: center; justify-content: center;">
+        <video id="webcamVideo" style="width: 100%; height: 100%; object-fit: cover;" autoplay playsinline></video>
+        <div style="position: absolute; width: 75%; height: 50%; border: 2px solid var(--accent-emerald); border-radius: 8px; box-shadow: 0 0 20px rgba(16,185,129,0.5); pointer-events: none; display: flex; align-items: center; justify-content: center;">
+          <span style="color: var(--accent-emerald); font-size: 0.72rem; font-weight: 600; background: rgba(0,0,0,0.6); padding: 0.2rem 0.5rem; border-radius: 4px;">Hold Barcode Here</span>
+        </div>
+      </div>
+
+      <div id="webcamStatus" style="font-size: 0.78rem; text-align: center; color: var(--text-muted);">Starting camera... Position case barcode inside frame.</div>
+    </div>
+  </div>
+
   <!-- Main 100vh Grid Workspace -->
   <div class="main-workspace">
 
@@ -302,6 +323,19 @@
         </div>
 
         <div class="setup-fields">
+          <div class="input-group" style="margin-bottom: 0.35rem;">
+            <label style="display: flex; justify-content: space-between; align-items: center;">
+              <span>📦 Scan Barcode (UPC)</span>
+              <span id="barcodeStatus" style="font-size: 0.65rem; color: var(--accent-emerald);">Ready</span>
+            </label>
+            <div style="display: flex; gap: 0.35rem;">
+              <input type="text" id="barcodeInput" placeholder="Scan/type UPC (e.g. 786936239126)" onkeydown="if(event.key==='Enter') lookupBarcode()">
+              <button class="btn btn-secondary" style="padding: 0.35rem 0.55rem;" onclick="openWebcamScanner()" title="Open Live Webcam Barcode Scanner">
+                <i data-lucide="camera" style="width: 14px;"></i>
+              </button>
+            </div>
+          </div>
+
           <div class="input-group">
             <label>Category</label>
             <select id="settingMediaType" onchange="toggleMediaFields(); saveSettings();">
@@ -510,6 +544,87 @@
         document.getElementById('statElapsed').innerText = '--:--:--';
       }
     }, 1000);
+
+    let webcamStream = null;
+    let webcamAnimFrame = null;
+
+    async function lookupBarcode(upcValue) {
+      const upc = upcValue || document.getElementById('barcodeInput').value.trim();
+      if (!upc) return;
+
+      const statusEl = document.getElementById('barcodeStatus');
+      statusEl.innerText = 'Searching...';
+      statusEl.style.color = 'var(--accent-amber)';
+
+      try {
+        const res = await fetch('/api/barcode-lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ upc })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          statusEl.innerText = 'Found! ✅';
+          statusEl.style.color = 'var(--accent-emerald)';
+          fetchStatus();
+        } else {
+          statusEl.innerText = 'Not Found ❌';
+          statusEl.style.color = 'var(--accent-rose)';
+        }
+      } catch (err) {
+        statusEl.innerText = 'Error ❌';
+        statusEl.style.color = 'var(--accent-rose)';
+      }
+    }
+
+    async function openWebcamScanner() {
+      const modal = document.getElementById('webcamModal');
+      modal.style.display = 'flex';
+      const video = document.getElementById('webcamVideo');
+      const status = document.getElementById('webcamStatus');
+
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = webcamStream;
+        status.innerText = 'Camera Active! Place barcode inside box.';
+        status.style.color = 'var(--accent-cyan)';
+
+        if ('BarcodeDetector' in window) {
+          const detector = new BarcodeDetector({ formats: ['upc_a', 'upc_e', 'ean_13', 'code_128'] });
+          const scanFrame = async () => {
+            if (!webcamStream) return;
+            try {
+              const barcodes = await detector.detect(video);
+              if (barcodes.length > 0) {
+                const code = barcodes[0].rawValue;
+                status.innerText = `Scanned: ${code}! Fetching...`;
+                status.style.color = 'var(--accent-emerald)';
+                document.getElementById('barcodeInput').value = code;
+                closeWebcamScanner();
+                lookupBarcode(code);
+                return;
+              }
+            } catch (e) {}
+            webcamAnimFrame = requestAnimationFrame(scanFrame);
+          };
+          scanFrame();
+        } else {
+          status.innerText = 'Camera active. Point barcode at screen or enter UPC manually.';
+        }
+      } catch (err) {
+        status.innerText = 'Camera access denied or unavailable.';
+        status.style.color = 'var(--accent-rose)';
+      }
+    }
+
+    function closeWebcamScanner() {
+      document.getElementById('webcamModal').style.display = 'none';
+      if (webcamAnimFrame) cancelAnimationFrame(webcamAnimFrame);
+      if (webcamStream) {
+        webcamStream.getTracks().forEach(t => t.stop());
+        webcamStream = null;
+      }
+    }
 
     function applyQuickShow(name, year, season, startEp) {
       document.getElementById('settingMediaType').value = 'tv';
