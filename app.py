@@ -436,7 +436,6 @@ def run_autorip_pipeline():
             if raw_files:
                 completed_count = len(raw_files)
                 state["progress_pct"] = min(10 + int((completed_count / 10.0) * 40), 48)
-                state["status_message"] = f"Ripping track {completed_count} with MakeMKV..."
 
         p_rip.wait()
         if p_rip.returncode != 0:
@@ -649,9 +648,28 @@ def run_autorip_pipeline():
 
 # --- Background Poller ---
 def drive_poller_thread():
+    last_raw_bytes = 0
+    last_check_time = time.time()
     while True:
-        time.sleep(2)
+        time.sleep(1.5)
         check_nas_storage()
+
+        if state["stage"] == "RIPPING":
+            raw_dir = TEMP_RAW_DIR
+            if os.path.exists(raw_dir):
+                total_bytes = sum(os.path.getsize(os.path.join(raw_dir, f)) for f in os.listdir(raw_dir) if os.path.isfile(os.path.join(raw_dir, f)))
+                now = time.time()
+                dt = now - last_check_time
+                if dt > 0 and last_raw_bytes > 0:
+                    mb_s = round(((total_bytes - last_raw_bytes) / (1024 * 1024)) / dt, 1)
+                    if mb_s >= 0:
+                        state["fps"] = f"{mb_s} MB/s"
+                last_raw_bytes = total_bytes
+                last_check_time = now
+                total_mb = round(total_bytes / (1024 * 1024), 1)
+                if total_mb > 0:
+                    state["status_message"] = f"MakeMKV Extracting Disc Data ({total_mb} MB total extracted)..."
+
         if state["stage"] in ["IDLE", "COUNTDOWN", "COMPLETE"]:
             check_drive_status()
             if state["stage"] == "COMPLETE" and not state["disc_present"]:

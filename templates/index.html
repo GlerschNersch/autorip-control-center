@@ -264,6 +264,11 @@
       </div>
     </div>
     <div class="header-actions">
+      <div class="nas-gauge-badge" id="livePollingBadge" style="border-color: rgba(16, 185, 129, 0.3);">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-emerald); box-shadow: 0 0 8px var(--accent-emerald);" class="spin"></span>
+        <span id="livePollingText" style="color: var(--accent-emerald); font-weight: 600;">LIVE POLLING</span>
+      </div>
+
       <div class="nas-gauge-badge">
         <i data-lucide="hard-drive" style="color: var(--accent-emerald); width: 14px;"></i>
         <span style="color: var(--text-muted);">NAS:</span>
@@ -450,7 +455,7 @@
       </div>
 
       <div class="console" id="consoleBox">
-        <div class="console-line">Initializing AutoRip Control Center...</div>
+        <div class="console-line">Connecting to AutoRip Control Center...</div>
       </div>
     </div>
 
@@ -670,11 +675,27 @@
     }
 
     async function fetchStatus() {
+      const liveBadge = document.getElementById('livePollingBadge');
+      const liveText = document.getElementById('livePollingText');
       try {
-        const res = await fetch('/api/status?t=' + Date.now(), { cache: 'no-store' });
-        const data = await res.json();
-        updateUI(data);
-      } catch (err) {}
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
+        
+        const res = await fetch('/api/status?t=' + Date.now(), { signal: controller.signal, cache: 'no-store' });
+        clearTimeout(timeoutId);
+        
+        if (res.ok) {
+          const data = await res.json();
+          updateUI(data);
+          if (liveBadge) liveBadge.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+          if (liveText) { liveText.innerText = 'LIVE POLLING'; liveText.style.color = 'var(--accent-emerald)'; }
+        } else {
+          throw new Error('HTTP Error');
+        }
+      } catch (err) {
+        if (liveBadge) liveBadge.style.borderColor = 'rgba(244, 63, 94, 0.4)';
+        if (liveText) { liveText.innerText = 'OFFLINE / RECONNECTING'; liveText.style.color = 'var(--accent-rose)'; }
+      }
     }
 
     function updateUI(data) {
@@ -722,7 +743,6 @@
       document.getElementById('statFps').innerText = state.fps || '0';
       document.getElementById('statEta').innerText = state.eta || '--:--';
       document.getElementById('statOverallEta').innerText = state.overall_eta || '--:--';
-
 
       if (['RIPPING', 'ENCODING', 'TRANSFERRING'].includes(state.stage)) {
         btnStart.disabled = true;
