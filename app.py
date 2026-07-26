@@ -40,6 +40,7 @@ state = {
     "disc_type": "DVD",          # DVD or Blu-ray
     "fps": "0",
     "eta": "--:--",
+    "overall_eta": "--:--",
     "start_timestamp": 0,
     "auto_start_countdown": 0,
     "auto_start_enabled": True,
@@ -50,16 +51,16 @@ state = {
     "settings": {
         "media_type": "tv",       # tv, movie, or ps3
         "format": "mp4",          # mp4 or mkv
-        "preset": "Auto",         # Auto, HQ 720p30 Surround, HQ 1080p30 Surround, NVENC H.264, NVENC H.265, Intel QSV, AMD VCE
+        "preset": "NVIDIA NVENC H.264", # Auto, HQ 720p30, HQ 1080p30, NVENC H.264, NVENC H.265, Intel QSV, AMD VCE
         "min_length_sec": 600,
         "auto_eject": True,
         "auto_rename": True,
         "include_episode_titles": True,
-        "show_name": "TaleSpin",
+        "show_name": "Darkwing Duck",
         "movie_title": "DuckTales The Movie",
-        "release_year": "1990",
+        "release_year": "1991",
         "season_number": 1,
-        "start_episode": 27,
+        "start_episode": 1,
         "discord_webhook_url": "",
         "plex_url": "",
         "plex_token": ""
@@ -175,6 +176,48 @@ def check_nas_storage():
     except Exception:
         state["nas_storage"] = {"free_gb": 0, "total_gb": 0, "used_pct": 0}
 
+def parse_disc_label_media(label):
+    if not label or label in ["Empty Drive / No Disc", "Ejected", "Drive Error / Empty"]:
+        return
+    
+    clean_label = label.replace("_", " ").replace(".", " ").replace("-", " ")
+    for word in ["VOLUME", "VOL", "DISC", "SEASON", "DES", "DVD", "BLURAY"]:
+        clean_label = clean_label.replace(word, " ").replace(word.lower(), " ")
+        
+    query = clean_label.strip()
+    if len(query) < 3:
+        return
+
+    try:
+        url = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(query)}"
+        req = urllib.request.urlopen(url, timeout=3)
+        data = json.loads(req.read().decode())
+        if data and "name" in data:
+            state["settings"]["media_type"] = "tv"
+            state["settings"]["show_name"] = data["name"]
+            if "premiered" in data and data["premiered"]:
+                state["settings"]["release_year"] = data["premiered"].split("-")[0]
+            add_log(f"[Auto-Detect] Recognized disc as TV Show: '{data['name']}' ({state['settings']['release_year']})")
+            fetch_media_artwork()
+            return
+    except Exception:
+        pass
+
+    try:
+        url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=movie&limit=1"
+        req = urllib.request.urlopen(url, timeout=3)
+        data = json.loads(req.read().decode())
+        if data and "results" in data and len(data["results"]) > 0:
+            item = data["results"][0]
+            state["settings"]["media_type"] = "movie"
+            state["settings"]["movie_title"] = item.get("trackName", query)
+            if "releaseDate" in item:
+                state["settings"]["release_year"] = item["releaseDate"].split("-")[0]
+            add_log(f"[Auto-Detect] Recognized disc as Movie: '{state['settings']['movie_title']}' ({state['settings']['release_year']})")
+            fetch_media_artwork()
+    except Exception:
+        pass
+
 def check_drive_status():
     drive = state["drive_letter"][0]
     previous_disc_present = state["disc_present"]
@@ -189,6 +232,9 @@ def check_drive_status():
                 state["disc_type"] = "Blu-ray"
             else:
                 state["disc_type"] = "DVD"
+                
+            if not previous_disc_present:
+                threading.Thread(target=parse_disc_label_media, args=(output,), daemon=True).start()
         else:
             state["disc_label"] = "Empty Drive / No Disc"
             state["disc_present"] = False
@@ -459,7 +505,28 @@ def run_autorip_pipeline():
                                 if "fps" in p:
                                     state["fps"] = p.strip().split()[0]
                                 if "ETA" in p:
-                                    state["eta"] = p.strip().replace("ETA ", "")
+                                    eta_str = p.strip().replace("ETA ", "")
+                                    state["eta"] = eta_str
+                                    # Calculate overall ETA across remaining titles
+                                    try:
+                                        eta_parts = [int(x) for x in eta_str.split(":")]
+                                        if len(eta_parts) == 3:
+                                            single_sec = eta_parts[0]*3600 + eta_parts[1]*60 + eta_parts[2]
+                                        elif len(eta_parts) == 2:
+                                            single_sec = eta_parts[0]*60 + eta_parts[1]
+                                        else:
+                                            single_sec = 0
+                                        
+                                        rem_titles = max(0, len(target_files) - idx)
+                                        tot_sec = single_sec + (rem_titles * max(single_sec, 180))
+                                        m, s = divmod(tot_sec, 60)
+                                        h, m = divmod(m, 60)
+                                        if h > 0:
+                                            state["overall_eta"] = f"{h:02d}:{m:02d}:{s:02d}"
+                                        else:
+                                            state["overall_eta"] = f"{m:02d}:{s:02d}"
+                                    except Exception:
+                                        pass
                     except Exception:
                         pass
 
@@ -506,6 +573,7 @@ def run_autorip_pipeline():
         state["progress_pct"] = 100
         state["fps"] = "0"
         state["eta"] = "--:--"
+        state["overall_eta"] = "--:--"
         state["start_timestamp"] = 0
 
         duration_min = round((time.time() - start_time) / 60, 1)
@@ -558,7 +626,6 @@ def drive_poller_thread():
             if state["stage"] == "COMPLETE" and not state["disc_present"]:
                 state["stage"] = "IDLE"
                 state["status_message"] = "System Ready - Insert a disc to begin"
-
 
 threading.Thread(target=drive_poller_thread, daemon=True).start()
 
