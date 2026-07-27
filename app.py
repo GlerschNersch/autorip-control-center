@@ -279,7 +279,6 @@ def check_drive_status():
         state["disc_present"] = False
         state["disc_type"] = "Unknown"
 
-
     if not previous_disc_present and state["disc_present"] and state["stage"] == "IDLE" and state["auto_start_enabled"]:
         trigger_auto_start_countdown()
 
@@ -352,7 +351,6 @@ def run_autorip_pipeline():
             state["status_message"] = "No disc in drive - Push disc tray in"
             return
 
-
         label = state["disc_label"]
         fmt = state["settings"]["format"]
         media_type = state["settings"]["media_type"]
@@ -398,7 +396,6 @@ def run_autorip_pipeline():
             return
 
         if media_type == "movie":
-
             min_sec = max(state["settings"]["min_length_sec"], 1800)
         else:
             min_sec = state["settings"]["min_length_sec"]
@@ -480,8 +477,13 @@ def run_autorip_pipeline():
         add_log(f"=== STAGE 2/3: HANDBRAKE ENCODING STARTED ({len(target_files)} files) ===")
         encoded_files = []
 
-        show_name = state["settings"]["show_name"]
-        movie_title = state["settings"]["movie_title"]
+        def clean_str(s):
+            for c in r'/\:*?"<>|':
+                s = str(s).replace(c, "")
+            return s.strip()
+
+        show_name = clean_str(state["settings"]["show_name"])
+        movie_title = clean_str(state["settings"]["movie_title"])
         year = state["settings"]["release_year"]
         season = state["settings"]["season_number"]
         start_ep = state["settings"]["start_episode"]
@@ -498,14 +500,15 @@ def run_autorip_pipeline():
                         target_filename = f"{movie_title} ({year}) - Part {idx:02d}.{fmt}"
                 else:
                     ep_num = start_ep + idx - 1
-                    ep_name = fetch_episode_title(show_name, season, ep_num) if include_titles else ""
+                    ep_name = clean_str(fetch_episode_title(show_name, season, ep_num)) if include_titles else ""
                     if ep_name:
                         target_filename = f"{show_name} - S{season:02d}E{ep_num:02d} - {ep_name}.{fmt}"
                     else:
                         target_filename = f"{show_name} - S{season:02d}E{ep_num:02d}.{fmt}"
             else:
-                target_filename = f"{label}_Title_{idx:02d}.{fmt}"
+                target_filename = f"{clean_str(label)}_Title_{idx:02d}.{fmt}"
 
+            target_filename = clean_str(target_filename)
             state["current_file"] = target_filename
             state["status_message"] = f"Encoding Title {idx} of {len(target_files)} ({target_filename})..."
             
@@ -551,7 +554,6 @@ def run_autorip_pipeline():
                                 if "ETA" in p:
                                     eta_str = p.strip().replace("ETA ", "")
                                     state["eta"] = eta_str
-                                    # Calculate overall ETA across remaining titles
                                     try:
                                         eta_parts = [int(x) for x in eta_str.split(":")]
                                         if len(eta_parts) == 3:
@@ -633,7 +635,6 @@ def run_autorip_pipeline():
 
         trigger_plex_refresh()
 
-        # Send Discord Webhook Embed Notification
         send_discord_notification(
             title=f"🎉 Disc Processing Complete: {label}",
             description=f"Successfully ripped and encoded **{len(encoded_files)} episode(s)** to NAS in **{duration_min} minutes**!",
@@ -805,7 +806,6 @@ def barcode_lookup():
 
     add_log(f"[Barcode Engine] Looking up UPC Barcode: {upc_raw} (Padded: {upc})...")
     
-    # 1. Query UPCItemDB API
     try:
         url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={upc}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -822,7 +822,6 @@ def barcode_lookup():
             clean_title = clean_title.strip(" :-()")
             add_log(f"[Barcode Engine] Cleaned Search Query: '{clean_title}'")
 
-            # Query TVMaze or iTunes for media details
             url_tv = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(clean_title)}"
             try:
                 res_tv = urllib.request.urlopen(url_tv, timeout=3)
@@ -837,7 +836,6 @@ def barcode_lookup():
             except Exception:
                 pass
 
-            # Try iTunes Movie Search
             url_movie = f"https://itunes.apple.com/search?term={urllib.parse.quote(clean_title)}&entity=movie&limit=1"
             try:
                 res_m = urllib.request.urlopen(url_movie, timeout=3)
@@ -855,7 +853,6 @@ def barcode_lookup():
     except Exception as e:
         add_log(f"[Barcode Engine] Note: {e}")
 
-    # 2. Fallback Direct Search
     try:
         url_movie = f"https://itunes.apple.com/search?term={urllib.parse.quote(upc)}&entity=movie&limit=1"
         res_m = urllib.request.urlopen(url_movie, timeout=3)
