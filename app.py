@@ -19,7 +19,7 @@ app.jinja_env.auto_reload = True
 
 # --- Configuration & Paths ---
 MAKEMKV_PATH = r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
-HANDBRAKE_PATH = r"C:\Users\matt\AppData\Local\Microsoft\WinGet\Packages\HandBrake.HandBrake.CLI_Microsoft.Winget.Source_8wekyb3d8bbwe\HandBrakeCLI.exe"
+HANDBRAKE_PATH = r"C:\Program Files\HandBrake\HandBrakeCLI.exe"
 PS3_DUMPER_PATH = r"C:\Tools\ps3-disc-dumper\ps3-disc-dumper.exe"
 TEMP_RAW_DIR = r"C:\AutoRipTemp\Raw"
 TEMP_ENCODED_DIR = r"C:\AutoRipTemp\Encoded"
