@@ -6,7 +6,10 @@ import json
 import shutil
 import subprocess
 import threading
+import csv
+import io
 import urllib.request
+import urllib.parse
 from flask import Flask, render_template, jsonify, request
 
 app = Flask(__name__)
@@ -42,6 +45,8 @@ state = {
     "eta": "--:--",
     "overall_eta": "--:--",
     "start_timestamp": 0,
+    "queue_count": 0,
+    "current_raw_dir": "",
 
     "auto_start_countdown": 0,
     "auto_start_enabled": True,
@@ -70,7 +75,11 @@ state = {
     }
 }
 
-process_lock = threading.Lock()
+rip_lock = threading.Lock()       # one disc ripped at a time (optical drive)
+encode_lock = threading.Lock()    # one encode/transfer job at a time (CPU/GPU)
+process_lock = rip_lock           # legacy alias used by /api/start
+encode_queue = []
+encode_queue_lock = threading.Lock()
 countdown_cancel_event = threading.Event()
 
 def load_history():
@@ -167,7 +176,7 @@ def send_discord_notification(title, description, poster_url=None, fields=None):
 
 def check_nas_storage():
     try:
-        usage = shutil.disk_usage(r"Z:\ ")
+        usage = shutil.disk_usage("Z:\\")
         free_gb = round(usage.free / (1024 ** 3), 1)
         total_gb = round(usage.total / (1024 ** 3), 1)
         used_pct = round(((usage.total - usage.free) / usage.total) * 100, 1)
@@ -251,10 +260,14 @@ def parse_disc_label_media(label):
 
 
 def check_drive_status():
-    if state["stage"] != "IDLE" or process_lock.locked():
+    if rip_lock.locked() or state["stage"] in ["COUNTDOWN", "RIPPING"]:
         return
 
     drive = state["drive_letter"][0]
+    if not drive.isalpha():
+        add_log(f"Invalid drive letter '{drive}' — skipping drive check.")
+        return
+
     previous_disc_present = state["disc_present"]
     try:
         cmd = f"(Get-Volume -DriveLetter '{drive}' -ErrorAction SilentlyContinue).FileSystemLabel"
@@ -279,11 +292,12 @@ def check_drive_status():
         state["disc_present"] = False
         state["disc_type"] = "Unknown"
 
-    if not previous_disc_present and state["disc_present"] and state["stage"] == "IDLE" and state["auto_start_enabled"]:
+
+    if not previous_disc_present and state["disc_present"] and state["auto_start_enabled"] and not rip_lock.locked() and state["stage"] not in ["COUNTDOWN", "RIPPING"]:
         trigger_auto_start_countdown()
 
 def trigger_auto_start_countdown():
-    if state["stage"] != "IDLE":
+    if rip_lock.locked() or state["stage"] in ["COUNTDOWN", "RIPPING"]:
         return
     
     countdown_cancel_event.clear()
@@ -326,12 +340,11 @@ def run_autorip_pipeline_async():
     thread.start()
 
 def run_autorip_pipeline():
-    if not process_lock.acquire(blocking=False):
-        add_log("Pipeline already running!")
+    if not rip_lock.acquire(blocking=False):
+        add_log("Rip already in progress!")
         return
 
-    start_time = time.time()
-    state["start_timestamp"] = int(start_time)
+    state["start_timestamp"] = int(time.time())
     try:
         os.makedirs(TEMP_RAW_DIR, exist_ok=True)
         os.makedirs(TEMP_ENCODED_DIR, exist_ok=True)
@@ -352,18 +365,17 @@ def run_autorip_pipeline():
             return
 
         label = state["disc_label"]
-        fmt = state["settings"]["format"]
         media_type = state["settings"]["media_type"]
-        
+
         if media_type == "ps3":
             state["stage"] = "RIPPING"
             state["status_message"] = f"Dumping PS3 Game Disc with PS3 Disc Dumper ({label})..."
             state["progress_pct"] = 15
             add_log(f"=== STAGE 1/1: PS3 DISC DUMPER STARTED ({label}) ===")
-            
+
             ps3_out_dir = os.path.join(DEFAULT_PS3_DESTINATION, label)
             os.makedirs(ps3_out_dir, exist_ok=True)
-            
+
             cmd_ps3 = [PS3_DUMPER_PATH]
             p_ps3 = subprocess.Popen(cmd_ps3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=r"C:\Tools\ps3-disc-dumper")
             for line in p_ps3.stdout:
@@ -381,7 +393,7 @@ def run_autorip_pipeline():
             state["stage"] = "COMPLETE"
             state["status_message"] = f"PS3 Game Disc Dumped Successfully to {ps3_out_dir}!"
             state["progress_pct"] = 100
-            
+
             send_discord_notification(
                 title=f"🎮 PS3 Game Dumped: {label}",
                 description=f"Successfully dumped PS3 game disc directly to NAS!",
@@ -390,7 +402,7 @@ def run_autorip_pipeline():
                     {"name": "Destination", "value": f"`{ps3_out_dir}`", "inline": False}
                 ]
             )
-            
+
             if state["settings"]["auto_eject"]:
                 subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
             return
@@ -406,47 +418,59 @@ def run_autorip_pipeline():
         fetch_media_artwork()
 
         # --- STEP 1: RIPPING ---
+        # Each job gets its own temp folder so parallel rip+encode don't collide.
+        job_raw_dir = os.path.join(TEMP_RAW_DIR, f"job_{int(time.time())}")
+        os.makedirs(job_raw_dir, exist_ok=True)
+        state["current_raw_dir"] = job_raw_dir
+
         state["stage"] = "RIPPING"
         state["status_message"] = f"Ripping raw tracks with MakeMKV ({label})..."
         state["progress_pct"] = 10
         add_log(f"=== STAGE 1/3: MAKEMKV DISC EXTRACTION STARTED ({label}) ===")
 
-        for f in os.listdir(TEMP_RAW_DIR):
-            fp = os.path.join(TEMP_RAW_DIR, f)
-            if os.path.isfile(fp):
-                try:
-                    os.remove(fp)
-                except Exception:
-                    pass
-
         cmd_rip = [
             MAKEMKV_PATH,
-            "-r", "mkv", "disc:0", "all", TEMP_RAW_DIR,
+            "-r", "mkv", "disc:0", "all", job_raw_dir,
             f"--minlength={min_sec}"
         ]
 
-        p_rip = subprocess.Popen(cmd_rip, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        p_rip = subprocess.Popen(cmd_rip, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in p_rip.stdout:
             line_str = line.strip()
-            if "MSG:3028" in line_str:
-                parts = line_str.split(",")
-                if len(parts) >= 6:
-                    title_num = parts[5].replace('"', '')
-                    duration = parts[4].replace('"', '') if len(parts) > 4 else "unknown"
+            if "PRGV:" in line_str:
+                try:
+                    prg_parts = line_str.split(":")[1].split(",")
+                    if len(prg_parts) >= 2:
+                        cur = float(prg_parts[0])
+                        tot = float(prg_parts[1])
+                        if tot > 0:
+                            rip_pct = 10 + int((cur / tot) * 38)
+                            state["progress_pct"] = min(rip_pct, 48)
+                except Exception:
+                    pass
+            elif "MSG:3028" in line_str:
+                try:
+                    fields = next(csv.reader(io.StringIO(line_str)))
+                    # fields: [msg_id, flags, count, fmt_str, human_str, param1, param2, ...]
+                    title_num = fields[5].strip() if len(fields) > 5 else "?"
+                    duration = fields[7].strip() if len(fields) > 7 else "unknown"
                     add_log(f"[MakeMKV] Title #{title_num} found (Duration: {duration})")
+                except Exception:
+                    pass
             elif "MSG:5014" in line_str:
-                parts = line_str.split(",")
-                if len(parts) >= 5:
-                    count = parts[4].replace('"', '')
+                try:
+                    fields = next(csv.reader(io.StringIO(line_str)))
+                    # fields[5] = count of titles, fields[4] = human message
+                    count = fields[5].strip() if len(fields) > 5 else "?"
                     add_log(f"[MakeMKV] Saving {count} titles to temp folder...")
+                except Exception:
+                    pass
             elif "MSG:5005" in line_str or "MSG:5036" in line_str:
                 add_log("[MakeMKV] Disc track extraction completed successfully.")
-            
-            raw_files = glob.glob(os.path.join(TEMP_RAW_DIR, "*.mkv"))
+
+            raw_files = glob.glob(os.path.join(job_raw_dir, "*.mkv"))
             if raw_files:
-                completed_count = len(raw_files)
-                state["progress_pct"] = min(10 + int((completed_count / 10.0) * 40), 48)
-                state["status_message"] = f"Ripping track {completed_count} with MakeMKV..."
+                state["status_message"] = f"Ripping track {len(raw_files)} with MakeMKV ({state['progress_pct']}%)..."
 
         p_rip.wait()
         if p_rip.returncode != 0:
@@ -455,12 +479,12 @@ def run_autorip_pipeline():
             state["status_message"] = "MakeMKV Rip Failed"
             return
 
-        raw_files = sorted(glob.glob(os.path.join(TEMP_RAW_DIR, "*.mkv")))
+        raw_files = sorted(glob.glob(os.path.join(job_raw_dir, "*.mkv")))
         if not raw_files:
             add_log("[MakeMKV] No titles met the minimum length criteria.")
-            state["stage"] = "COMPLETE"
-            state["status_message"] = "Finished - No titles found"
-            state["progress_pct"] = 100
+            state["stage"] = "IDLE"
+            state["status_message"] = "Finished - No titles found. Insert next disc."
+            state["progress_pct"] = 0
             return
 
         if media_type == "tv" and state["settings"]["auto_rename"] and len(raw_files) > 1:
@@ -470,34 +494,91 @@ def run_autorip_pipeline():
             target_files = raw_files
 
         state["total_titles"] = len(target_files)
-        add_log(f"=== STAGE 1 COMPLETE: Extracted {len(target_files)} title(s) to disk ===")
+        add_log(f"=== STAGE 1 COMPLETE: Extracted {len(target_files)} title(s) — queuing for encode ===")
 
+        if state["settings"]["auto_eject"]:
+            add_log("Rip done — ejecting so you can insert the next disc while encoding runs...")
+            try:
+                subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
+                state["disc_present"] = False
+                state["disc_label"] = "Ejected"
+            except Exception as e:
+                add_log(f"Auto-eject warning: {e}")
+
+        job = {
+            "raw_files": target_files,
+            "raw_dir": job_raw_dir,
+            "label": label,
+            "disc_type": state["disc_type"],
+            "settings": dict(state["settings"]),
+        }
+        with encode_queue_lock:
+            encode_queue.append(job)
+            state["queue_count"] = len(encode_queue)
+
+        add_log(f"Disc queued for encoding. Queue depth: {state['queue_count']}. Insert next disc anytime.")
+        state["stage"] = "IDLE"
+        state["status_message"] = f"Rip complete — {state['queue_count']} job(s) queued for encode. Ready for next disc."
+        state["progress_pct"] = 0
+        state["start_timestamp"] = 0
+        state["current_raw_dir"] = ""
+
+    except Exception as e:
+        add_log(f"Fatal error in rip pipeline: {e}")
+        state["stage"] = "ERROR"
+        state["status_message"] = f"Rip Error: {e}"
+        state["start_timestamp"] = 0
+    finally:
+        rip_lock.release()
+
+
+def run_encode_transfer_stage(job):
+    raw_files = job["raw_files"]
+    job_raw_dir = job["raw_dir"]
+    label = job["label"]
+    disc_type = job["disc_type"]
+    settings = job["settings"]
+    media_type = settings["media_type"]
+    fmt = settings["format"]
+    preset = settings["preset"]
+
+    start_time = time.time()
+
+    def set_stage(stage, msg=None):
+        if not rip_lock.locked():
+            state["stage"] = stage
+            if msg:
+                state["status_message"] = msg
+
+    def clean_str(s):
+        for c in r'/\:*?"<>|':
+            s = str(s).replace(c, "")
+        return s.strip()
+
+    show_name = clean_str(settings["show_name"])
+    movie_title = clean_str(settings["movie_title"])
+    year = settings["release_year"]
+    season = settings["season_number"]
+    start_ep = settings["start_episode"]
+    include_titles = settings.get("include_episode_titles", True)
+
+    try:
         # --- STEP 2: ENCODING ---
-        state["stage"] = "ENCODING"
-        add_log(f"=== STAGE 2/3: HANDBRAKE ENCODING STARTED ({len(target_files)} files) ===")
+        q = state["queue_count"]
+        q_label = f" [{q} more in queue]" if q > 0 else ""
+        set_stage("ENCODING", f"Encoding {len(raw_files)} title(s) from '{label}'...{q_label}")
+        add_log(f"=== STAGE 2/3: HANDBRAKE ENCODING STARTED ({len(raw_files)} files from '{label}') ===")
+        if not rip_lock.locked():
+            state["start_timestamp"] = int(start_time)
         encoded_files = []
 
-        def clean_str(s):
-            for c in r'/\:*?"<>|':
-                s = str(s).replace(c, "")
-            return s.strip()
+        for idx, raw_file in enumerate(raw_files, start=1):
+            if not rip_lock.locked():
+                state["current_title"] = idx
 
-        show_name = clean_str(state["settings"]["show_name"])
-        movie_title = clean_str(state["settings"]["movie_title"])
-        year = state["settings"]["release_year"]
-        season = state["settings"]["season_number"]
-        start_ep = state["settings"]["start_episode"]
-        include_titles = state["settings"].get("include_episode_titles", True)
-
-        for idx, raw_file in enumerate(target_files, start=1):
-            state["current_title"] = idx
-            
-            if state["settings"]["auto_rename"]:
+            if settings["auto_rename"]:
                 if media_type == "movie":
-                    if len(target_files) == 1:
-                        target_filename = f"{movie_title} ({year}).{fmt}"
-                    else:
-                        target_filename = f"{movie_title} ({year}) - Part {idx:02d}.{fmt}"
+                    target_filename = f"{movie_title} ({year}).{fmt}" if len(raw_files) == 1 else f"{movie_title} ({year}) - Part {idx:02d}.{fmt}"
                 else:
                     ep_num = start_ep + idx - 1
                     ep_name = clean_str(fetch_episode_title(show_name, season, ep_num)) if include_titles else ""
@@ -509,15 +590,15 @@ def run_autorip_pipeline():
                 target_filename = f"{clean_str(label)}_Title_{idx:02d}.{fmt}"
 
             target_filename = clean_str(target_filename)
-            state["current_file"] = target_filename
-            state["status_message"] = f"Encoding Title {idx} of {len(target_files)} ({target_filename})..."
-            
+            if not rip_lock.locked():
+                state["current_file"] = target_filename
+                state["status_message"] = f"Encoding Title {idx}/{len(raw_files)} ({target_filename}){q_label}"
+
             out_file = os.path.join(TEMP_ENCODED_DIR, target_filename)
-            add_log(f"[HandBrake] [{idx}/{len(target_files)}] Starting encode -> '{target_filename}'")
+            add_log(f"[HandBrake] [{idx}/{len(raw_files)}] Starting encode -> '{target_filename}'")
 
             cmd_enc = [HANDBRAKE_PATH, "-i", raw_file, "-o", out_file]
-            
-            # Preset & GPU Acceleration logic
+
             if "NVENC H.264" in preset:
                 cmd_enc.extend(["--encoder", "nvenc_h264", "--quality", "20", "--encoder-preset", "fast"])
             elif "NVENC H.265" in preset:
@@ -527,24 +608,25 @@ def run_autorip_pipeline():
             elif "AMD VCE" in preset:
                 cmd_enc.extend(["--encoder", "vce_h264", "--quality", "20"])
             else:
-                preset_arg = preset if preset != "Auto" else ("HQ 1080p30 Surround" if state["disc_type"] == "Blu-ray" else "HQ 720p30 Surround")
+                preset_arg = preset if preset != "Auto" else ("HQ 1080p30 Surround" if disc_type == "Blu-ray" else "HQ 720p30 Surround")
                 cmd_enc.extend(["--preset", preset_arg])
 
-            p_enc = subprocess.Popen(cmd_enc, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            p_enc = subprocess.Popen(cmd_enc, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             last_logged_quarter = -1
-            
+
             for line in p_enc.stdout:
                 if "Encoding: task" in line:
                     try:
                         if "%" in line:
                             sub_pct = float(line.split("%")[0].split(",")[-1].strip())
-                            overall = 50 + int((idx - 1 + (sub_pct / 100.0)) / len(target_files) * 40)
-                            state["progress_pct"] = min(overall, 92)
-                            
+                            if not rip_lock.locked():
+                                overall = 50 + int((idx - 1 + (sub_pct / 100.0)) / len(raw_files) * 40)
+                                state["progress_pct"] = min(overall, 92)
+
                             quarter = int(sub_pct // 25)
                             if quarter > last_logged_quarter and quarter > 0 and quarter <= 4:
                                 last_logged_quarter = quarter
-                                add_log(f"[HandBrake] [{target_filename}] Progress: {int(sub_pct)}% | Speed: {state['fps']} FPS | ETA: {state['eta']}")
+                                add_log(f"[HandBrake] [{target_filename}] {int(sub_pct)}% | {state['fps']} FPS | ETA: {state['eta']}")
 
                         if "fps" in line:
                             parts = line.split(",")
@@ -562,18 +644,14 @@ def run_autorip_pipeline():
                                             single_sec = eta_parts[0]*60 + eta_parts[1]
                                         else:
                                             single_sec = 0
-                                        
-                                        rem_titles = max(0, len(target_files) - idx)
+                                        rem_titles = max(0, len(raw_files) - idx)
                                         tot_sec = single_sec + (rem_titles * max(single_sec, 180))
                                         m, s = divmod(tot_sec, 60)
                                         h, m = divmod(m, 60)
-                                        if h > 0:
-                                            state["overall_eta"] = f"{h:02d}:{m:02d}:{s:02d}"
-                                        else:
-                                            state["overall_eta"] = f"{m:02d}:{s:02d}"
+                                        if not rip_lock.locked():
+                                            state["overall_eta"] = f"{h:02d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
                                     except Exception:
                                         pass
-
                     except Exception:
                         pass
 
@@ -581,26 +659,26 @@ def run_autorip_pipeline():
             if p_enc.returncode == 0 and os.path.exists(out_file):
                 size_mb = round(os.path.getsize(out_file) / (1024 * 1024), 1)
                 encoded_files.append(out_file)
-                add_log(f"[HandBrake] Successfully encoded '{target_filename}' ({size_mb} MB)")
+                add_log(f"[HandBrake] Encoded '{target_filename}' ({size_mb} MB)")
             else:
                 add_log(f"[HandBrake] Encoding failed for title {idx}.")
 
         # --- STEP 3: TRANSFERRING TO NAS ---
-        state["stage"] = "TRANSFERRING"
+        set_stage("TRANSFERRING", f"Moving {len(encoded_files)} file(s) to NAS{q_label}...")
         add_log(f"=== STAGE 3/3: TRANSFERRING {len(encoded_files)} FILE(S) TO NAS ===")
-        state["status_message"] = f"Moving {len(encoded_files)} file(s) to NAS..."
-        state["progress_pct"] = 95
+        if not rip_lock.locked():
+            state["progress_pct"] = 95
 
-        if state["settings"]["auto_rename"]:
+        if settings["auto_rename"]:
             if media_type == "movie":
                 nas_folder = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
             else:
                 nas_folder = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
         else:
             nas_folder = os.path.join(DEFAULT_TV_DESTINATION, "Uncategorized")
-            
+
         os.makedirs(nas_folder, exist_ok=True)
-        add_log(f"[NAS] Destination Directory: {nas_folder}")
+        add_log(f"[NAS] Destination: {nas_folder}")
 
         moved_names = []
         for ef in encoded_files:
@@ -608,26 +686,32 @@ def run_autorip_pipeline():
             size_mb = round(os.path.getsize(ef) / (1024 * 1024), 1)
             shutil.move(ef, dest)
             moved_names.append(os.path.basename(ef))
-            add_log(f"[NAS Transfer] Moved '{os.path.basename(ef)}' ({size_mb} MB) -> {dest}")
+            add_log(f"[NAS] Moved '{os.path.basename(ef)}' ({size_mb} MB) -> {dest}")
 
-        if media_type == "tv" and state["settings"]["auto_rename"]:
-            state["settings"]["start_episode"] = start_ep + len(encoded_files)
-            add_log(f"Auto-incremented TV episode counter to S{season:02d}E{state['settings']['start_episode']:02d} for next disc!")
+        if media_type == "tv" and settings["auto_rename"]:
+            new_ep = start_ep + len(encoded_files)
+            state["settings"]["start_episode"] = new_ep
+            add_log(f"Auto-incremented episode counter to S{season:02d}E{new_ep:02d} for next disc!")
 
-        # --- STEP 4: COMPLETE & EJECT ---
-        state["stage"] = "COMPLETE"
-        state["status_message"] = f"Finished! {len(encoded_files)} file(s) saved to NAS."
-        state["progress_pct"] = 100
-        state["fps"] = "0"
-        state["eta"] = "--:--"
-        state["start_timestamp"] = 0
+        # Clean up per-job raw dir now that encoding is done
+        try:
+            shutil.rmtree(job_raw_dir, ignore_errors=True)
+        except Exception:
+            pass
 
         duration_min = round((time.time() - start_time) / 60, 1)
+        set_stage("COMPLETE", f"Done! {len(encoded_files)} file(s) from '{label}' saved to NAS.")
+        if not rip_lock.locked():
+            state["progress_pct"] = 100
+            state["fps"] = "0"
+            state["eta"] = "--:--"
+            state["start_timestamp"] = 0
+
         save_history_entry({
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "disc_label": label,
             "media_type": media_type.upper(),
-            "disc_type": state["disc_type"],
+            "disc_type": disc_type,
             "episodes_saved": len(encoded_files),
             "destination": nas_folder,
             "duration_min": duration_min
@@ -637,29 +721,48 @@ def run_autorip_pipeline():
 
         send_discord_notification(
             title=f"🎉 Disc Processing Complete: {label}",
-            description=f"Successfully ripped and encoded **{len(encoded_files)} episode(s)** to NAS in **{duration_min} minutes**!",
+            description=f"Ripped and encoded **{len(encoded_files)} file(s)** to NAS in **{duration_min} min**!",
             poster_url=state["artwork_url"],
             fields=[
-                {"name": "Media Target", "value": f"{show_name if media_type=='tv' else movie_title} ({year})", "inline": True},
-                {"name": "Disc Type", "value": state["disc_type"], "inline": True},
+                {"name": "Media", "value": f"{show_name if media_type=='tv' else movie_title} ({year})", "inline": True},
+                {"name": "Disc Type", "value": disc_type, "inline": True},
                 {"name": "Destination", "value": f"`{nas_folder}`", "inline": False},
-                {"name": "Episodes Saved", "value": "\n".join([f"• `{n}`" for n in moved_names[:5]]) + (f"\n*...and {len(moved_names)-5} more*" if len(moved_names)>5 else ""), "inline": False}
+                {"name": "Files", "value": "\n".join([f"• `{n}`" for n in moved_names[:5]]) + (f"\n*...and {len(moved_names)-5} more*" if len(moved_names) > 5 else ""), "inline": False}
             ]
         )
 
-        if state["settings"]["auto_eject"]:
-            add_log("Ejecting drive D:...")
+        if settings["auto_eject"] and state["disc_present"]:
             subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
             state["disc_present"] = False
             state["disc_label"] = "Ejected"
 
     except Exception as e:
-        add_log(f"Fatal error in pipeline: {e}")
-        state["stage"] = "ERROR"
-        state["status_message"] = f"Error: {e}"
-        state["start_timestamp"] = 0
-    finally:
-        process_lock.release()
+        add_log(f"Fatal error in encode/transfer: {e}")
+        if not rip_lock.locked():
+            state["stage"] = "ERROR"
+            state["status_message"] = f"Encode Error: {e}"
+
+
+def encode_worker():
+    while True:
+        time.sleep(0.5)
+        with encode_queue_lock:
+            if not encode_queue:
+                continue
+        if not encode_lock.acquire(blocking=False):
+            continue
+        with encode_queue_lock:
+            if not encode_queue:
+                encode_lock.release()
+                continue
+            job = encode_queue.pop(0)
+            state["queue_count"] = len(encode_queue)
+        try:
+            run_encode_transfer_stage(job)
+        finally:
+            encode_lock.release()
+
+threading.Thread(target=encode_worker, daemon=True).start()
 
 cached_nas_files = []
 
@@ -702,8 +805,9 @@ def drive_poller_thread():
         check_nas_storage()
         update_nas_files_cache()
 
+
         if state["stage"] == "RIPPING":
-            raw_dir = TEMP_RAW_DIR
+            raw_dir = state["current_raw_dir"] or TEMP_RAW_DIR
             if os.path.exists(raw_dir):
                 total_bytes = sum(os.path.getsize(os.path.join(raw_dir, f)) for f in os.listdir(raw_dir) if os.path.isfile(os.path.join(raw_dir, f)))
                 now = time.time()
@@ -718,11 +822,12 @@ def drive_poller_thread():
                 if total_mb > 0:
                     state["status_message"] = f"MakeMKV Extracting Disc Data ({total_mb} MB total extracted)..."
 
-        if state["stage"] in ["IDLE", "COUNTDOWN", "COMPLETE"]:
-            check_drive_status()
-            if state["stage"] == "COMPLETE" and not state["disc_present"]:
-                state["stage"] = "IDLE"
-                state["status_message"] = "System Ready - Insert a disc to begin"
+        check_drive_status()
+        if state["stage"] == "COMPLETE" and not state["disc_present"] and not encode_lock.locked():
+            state["stage"] = "IDLE"
+            state["status_message"] = "System Ready - Insert a disc to begin"
+
+
 
 threading.Thread(target=drive_poller_thread, daemon=True).start()
 
@@ -751,13 +856,14 @@ def get_status():
 
 @app.route("/api/start", methods=["POST"])
 def start_pipeline():
-    if state["stage"] in ["RIPPING", "ENCODING", "TRANSFERRING"]:
-        return jsonify({"status": "error", "message": "Pipeline is already running"}), 400
-    
+    if rip_lock.locked() or state["stage"] in ["COUNTDOWN", "RIPPING"]:
+        return jsonify({"status": "error", "message": "Rip already in progress"}), 400
+
     state["disc_present"] = True
     countdown_cancel_event.set()
     run_autorip_pipeline_async()
     return jsonify({"status": "success", "message": "Pipeline started"})
+
 
 @app.route("/api/cancel-autostart", methods=["POST"])
 def cancel_autostart():
@@ -799,6 +905,7 @@ def barcode_lookup():
     if not upc_raw:
         return jsonify({"status": "error", "message": "No UPC provided"}), 400
 
+    # Auto-pad short barcodes to 12 digits if 10 or 11 digits
     if len(upc_raw) < 12 and upc_raw.isdigit():
         upc = upc_raw.zfill(12)
     else:
@@ -806,6 +913,7 @@ def barcode_lookup():
 
     add_log(f"[Barcode Engine] Looking up UPC Barcode: {upc_raw} (Padded: {upc})...")
     
+    # 1. Query UPCItemDB API
     try:
         url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={upc}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -822,6 +930,8 @@ def barcode_lookup():
             clean_title = clean_title.strip(" :-()")
             add_log(f"[Barcode Engine] Cleaned Search Query: '{clean_title}'")
 
+            
+            # Query TVMaze or iTunes for media details
             url_tv = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(clean_title)}"
             try:
                 res_tv = urllib.request.urlopen(url_tv, timeout=3)
@@ -836,6 +946,7 @@ def barcode_lookup():
             except Exception:
                 pass
 
+            # Try iTunes Movie Search
             url_movie = f"https://itunes.apple.com/search?term={urllib.parse.quote(clean_title)}&entity=movie&limit=1"
             try:
                 res_m = urllib.request.urlopen(url_movie, timeout=3)
@@ -853,6 +964,7 @@ def barcode_lookup():
     except Exception as e:
         add_log(f"[Barcode Engine] Note: {e}")
 
+    # 2. Fallback Direct Search
     try:
         url_movie = f"https://itunes.apple.com/search?term={urllib.parse.quote(upc)}&entity=movie&limit=1"
         res_m = urllib.request.urlopen(url_movie, timeout=3)
@@ -870,5 +982,110 @@ def barcode_lookup():
 
     return jsonify({"status": "error", "message": "Barcode not found in database. Please enter title manually."}), 404
 
+
+@app.route("/api/raw-dirs", methods=["GET"])
+def list_raw_dirs():
+    dirs = []
+    if not os.path.exists(TEMP_RAW_DIR):
+        return jsonify({"status": "success", "dirs": []})
+
+    def dir_entry(path, name):
+        mkv_files = sorted(glob.glob(os.path.join(path, "*.mkv")))
+        if not mkv_files:
+            return None
+        total_gb = round(sum(os.path.getsize(f) for f in mkv_files) / (1024 ** 3), 2)
+        first = os.path.basename(mkv_files[0])
+        label = first.rsplit("_t", 1)[0].replace("-", ": ").strip() if "_t" in first else name
+        return {"path": path, "name": name, "file_count": len(mkv_files), "total_gb": total_gb, "label": label}
+
+    # Files directly in TEMP_RAW_DIR (pre-queue legacy layout)
+    entry = dir_entry(TEMP_RAW_DIR, "Raw (root)")
+    if entry:
+        dirs.append(entry)
+
+    # Subdirectories (job_* layout from queue system)
+    try:
+        for d in sorted(os.listdir(TEMP_RAW_DIR)):
+            full = os.path.join(TEMP_RAW_DIR, d)
+            if os.path.isdir(full):
+                entry = dir_entry(full, d)
+                if entry:
+                    dirs.append(entry)
+    except Exception:
+        pass
+
+    return jsonify({"status": "success", "dirs": dirs})
+
+
+@app.route("/api/reencode", methods=["POST"])
+def reencode_from_raw():
+    data = request.json or {}
+    raw_dir = data.get("raw_dir", "").strip()
+
+    if not raw_dir:
+        return jsonify({"status": "error", "message": "No raw_dir provided"}), 400
+
+    abs_raw = os.path.abspath(raw_dir)
+    abs_temp = os.path.abspath(TEMP_RAW_DIR)
+    if not (abs_raw == abs_temp or abs_raw.startswith(abs_temp + os.sep)):
+        return jsonify({"status": "error", "message": "Path not inside temp directory"}), 403
+
+    if not os.path.isdir(abs_raw):
+        return jsonify({"status": "error", "message": "Directory does not exist"}), 400
+
+    raw_files = sorted(glob.glob(os.path.join(abs_raw, "*.mkv")))
+    if not raw_files:
+        return jsonify({"status": "error", "message": "No MKV files found"}), 400
+
+    media_type = state["settings"]["media_type"]
+    if media_type == "tv" and state["settings"]["auto_rename"] and len(raw_files) > 1:
+        target_files = raw_files[1:]
+    else:
+        target_files = raw_files
+
+    first = os.path.basename(raw_files[0])
+    label = first.rsplit("_t", 1)[0].replace("- ", ": ").strip() if "_t" in first else first
+
+    job = {
+        "raw_files": target_files,
+        "raw_dir": abs_raw,
+        "label": label,
+        "disc_type": state["disc_type"],
+        "settings": dict(state["settings"]),
+    }
+    with encode_queue_lock:
+        encode_queue.append(job)
+        state["queue_count"] = len(encode_queue)
+
+    add_log(f"[Recovery] Queued '{label}' ({len(target_files)} titles) for encode. Queue depth: {state['queue_count']}.")
+    return jsonify({"status": "success", "message": f"Queued {len(target_files)} title(s)", "queue_count": state["queue_count"]})
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    import webview
+
+    def start_server():
+        from waitress import serve
+        serve(app, host="127.0.0.1", port=5000)
+
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+
+    # Poll until the server is ready before opening the window
+    import urllib.error
+    for _ in range(20):
+        try:
+            urllib.request.urlopen("http://127.0.0.1:5000", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.25)
+
+    window = webview.create_window(
+        "AutoRip Control Center",
+        "http://127.0.0.1:5000",
+        width=1280,
+        height=860,
+        resizable=True,
+        min_size=(900, 600),
+    )
+    webview.start()

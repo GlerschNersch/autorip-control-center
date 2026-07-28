@@ -210,6 +210,7 @@
       box-shadow: 0 0 12px rgba(6, 182, 212, 0.6);
     }
 
+
     .stats-bar { display: flex; justify-content: space-between; padding: 0.45rem 0.7rem; background: rgba(15, 23, 42, 0.5); border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.04); font-size: 0.74rem; flex-shrink: 0; }
     .stat-item { display: flex; align-items: center; gap: 0.3rem; color: var(--text-muted); }
     .stat-value { font-weight: 700; color: var(--accent-cyan); }
@@ -247,7 +248,7 @@
     .file-name { display: flex; align-items: center; gap: 0.35rem; font-size: 0.74rem; word-break: break-all; }
     .file-size { font-size: 0.7rem; color: var(--text-muted); font-weight: 500; }
 
-    .history-item { padding: 0.5rem; background: rgba(15, 23, 42, 0.4); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; gap: 0.18rem; font-size: 0.74rem; }
+    .history-item { padding: 0.5rem; background: rgba(15, 23, 42, 0.4); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.72rem; }
 
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -278,15 +279,31 @@
         <i data-lucide="eject" style="width: 13px;"></i> Eject (D:)
       </button>
     </div>
+
   </header>
 
   <!-- Countdown AutoStart Banner -->
   <div class="card" id="countdownBanner" style="display: none; background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(244, 63, 94, 0.2)); border-color: var(--accent-amber); padding: 0.45rem 0.8rem; flex-direction: row; justify-content: space-between; align-items: center; flex-shrink: 0;">
     <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; font-weight: 600; color: var(--accent-amber);">
-      <i data-lucide="zap" style="width: 16px;"></i>
+      <i data-lucide="zap" style="width: 15px;"></i>
       Disc Detected! Auto-Starting rip in <span id="countdownSec" style="font-size: 0.95rem; font-weight: 800;">10</span>s...
     </div>
     <button class="btn btn-warning" onclick="cancelAutoStart()"><i data-lucide="x" style="width: 12px;"></i> Cancel</button>
+  </div>
+
+  <!-- Raw File Recovery Modal -->
+  <div id="recoveryModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 9999; align-items: center; justify-content: center;">
+    <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; width: 90%; max-width: 540px; padding: 1.2rem; display: flex; flex-direction: column; gap: 0.8rem; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 0.4rem;">
+          <i data-lucide="refresh-cw" style="color: var(--accent-amber);"></i> Raw File Recovery
+        </h3>
+        <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem;" onclick="closeRecoveryModal()"><i data-lucide="x" style="width: 14px;"></i></button>
+      </div>
+      <p style="margin: 0; font-size: 0.78rem; color: var(--text-muted);">Re-queue raw MKV files from an interrupted job. Uses <strong>current settings</strong> — set the correct season/episode before queueing.</p>
+      <div id="recoveryDirList" style="display: flex; flex-direction: column; gap: 0.45rem; max-height: 320px; overflow-y: auto;"></div>
+      <button onclick="closeRecoveryModal()" class="btn btn-secondary" style="align-self: flex-end;">Close</button>
+    </div>
   </div>
 
   <!-- Webcam Barcode Scanner Modal -->
@@ -310,7 +327,6 @@
     </div>
   </div>
 
-  <!-- Main 100vh Grid Workspace -->
   <div class="main-workspace">
 
     <!-- COLUMN 1: Media Setup & Poster Artwork -->
@@ -340,6 +356,8 @@
             </label>
             <div style="display: flex; gap: 0.35rem;">
               <input type="text" id="barcodeInput" placeholder="Scan/type UPC (e.g. 786936239126)" oninput="if(this.value.trim().length>=8) lookupBarcode(this.value.trim())" onkeydown="if(event.key==='Enter') lookupBarcode()">
+
+
               <button class="btn btn-secondary" style="padding: 0.35rem 0.55rem;" onclick="openWebcamScanner()" title="Open Live Webcam Barcode Scanner">
                 <i data-lucide="camera" style="width: 14px;"></i>
               </button>
@@ -355,10 +373,13 @@
             </select>
           </div>
 
+
+
           <div class="input-group" id="groupTvName">
             <label>TV Show Name</label>
             <input type="text" id="settingShowName" value="Avatar: The Last Airbender" onchange="saveSettings()">
           </div>
+
 
           <div class="input-group" id="groupMovieTitle" style="display: none;">
             <label>Movie Title</label>
@@ -380,6 +401,7 @@
             <label>Start Episode #</label>
             <input type="number" id="settingStartEp" value="1" onchange="saveSettings()">
           </div>
+
         </div>
       </div>
 
@@ -411,10 +433,16 @@
               <span class="badge badge-type" id="discTypeBadge">DVD</span>
             </div>
           </div>
+
         </div>
-        <button class="btn btn-primary" id="btnStart" onclick="startRip()">
-          <i data-lucide="play" style="width: 13px;"></i> Start Pipeline
-        </button>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button class="btn btn-primary" id="btnStart" onclick="startRip()">
+            <i data-lucide="play" style="width: 13px;"></i> Start Pipeline
+          </button>
+          <button class="btn btn-secondary" onclick="openRecoveryModal()" title="Re-encode raw files from a previous interrupted job">
+            <i data-lucide="refresh-cw" style="width: 13px;"></i> Recover
+          </button>
+        </div>
       </div>
 
       <div class="stepper">
@@ -450,6 +478,7 @@
           <div class="stat-item"><i data-lucide="gauge" style="width: 13px;"></i> <span class="stat-value" id="statFps">0</span> FPS</div>
           <div class="stat-item"><i data-lucide="clock" style="width: 13px;"></i> File ETA: <span class="stat-value" id="statEta">--:--</span></div>
           <div class="stat-item"><i data-lucide="sparkles" style="width: 13px; color: var(--accent-emerald);"></i> Total ETA: <span class="stat-value" id="statOverallEta" style="color: var(--accent-emerald);">--:--</span></div>
+          <div class="stat-item"><i data-lucide="layers" style="width: 13px; color: var(--accent-primary);"></i> Queue: <span class="stat-value" id="statQueue" style="color: var(--accent-primary);">0</span></div>
         </div>
 
       </div>
@@ -516,7 +545,7 @@
         <div class="sys-info-box">
           <div class="sys-info-row"><span>Target NAS Path:</span><span style="color:#f8fafc;">Z:\TV Shows</span></div>
           <div class="sys-info-row"><span>Optical Drive:</span><span style="color:#f8fafc;">D: ASUS BW-16D1HT</span></div>
-          <div class="sys-info-row"><span>Tools (MakeMKV & PS3 Dumper):</span><span class="sys-info-val">ONLINE ✅</span></div>
+          <div class="sys-info-row"><span>MakeMKV & HandBrake:</span><span class="sys-info-val">ONLINE ✅</span></div>
         </div>
       </div>
 
@@ -558,6 +587,7 @@
         document.getElementById('statElapsed').innerText = '--:--:--';
       }
     }, 1000);
+
 
     let webcamStream = null;
     let webcamAnimFrame = null;
@@ -650,6 +680,7 @@
       saveSettings();
     }
 
+
     function switchTab(evt, tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -665,11 +696,6 @@
         document.getElementById('groupTvSeason').style.display = 'none';
         document.getElementById('groupTvStartEp').style.display = 'none';
         document.getElementById('groupMovieTitle').style.display = 'flex';
-      } else if (mediaType === 'ps3') {
-        document.getElementById('groupTvName').style.display = 'none';
-        document.getElementById('groupTvSeason').style.display = 'none';
-        document.getElementById('groupTvStartEp').style.display = 'none';
-        document.getElementById('groupMovieTitle').style.display = 'none';
       } else {
         document.getElementById('groupTvName').style.display = 'flex';
         document.getElementById('groupTvSeason').style.display = 'flex';
@@ -702,6 +728,7 @@
       }
     }
 
+
     function updateUI(data) {
       const { state, nas_files, history } = data;
 
@@ -731,6 +758,7 @@
         badge.innerText = 'NO DISC'; badge.className = 'badge badge-empty';
       }
 
+
       const countdownBanner = document.getElementById('countdownBanner');
       if (state.stage === 'COUNTDOWN') {
         countdownBanner.style.display = 'flex';
@@ -747,14 +775,17 @@
       document.getElementById('statFps').innerText = state.fps || '0';
       document.getElementById('statEta').innerText = state.eta || '--:--';
       document.getElementById('statOverallEta').innerText = state.overall_eta || '--:--';
+      document.getElementById('statQueue').innerText = state.queue_count || 0;
+
 
       if (['RIPPING', 'ENCODING', 'TRANSFERRING'].includes(state.stage)) {
         btnStart.disabled = true;
         btnStart.innerHTML = `<i data-lucide="loader" class="spin" style="width:13px;"></i> Working...`;
       } else {
-        btnStart.disabled = !state.disc_present;
+        btnStart.disabled = false;
         btnStart.innerHTML = `<i data-lucide="play" style="width:13px;"></i> Start Pipeline`;
       }
+
 
       const s1 = document.getElementById('step1');
       const s2 = document.getElementById('step2');
@@ -774,7 +805,7 @@
         consoleBox.scrollTop = consoleBox.scrollHeight;
       }
 
-      const setVal = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value = val; };
+      const setVal = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined && document.activeElement !== el) el.value = val; };
       setVal('settingMediaType', state.settings.media_type || 'tv');
       setVal('settingShowName', state.settings.show_name || '');
       setVal('settingMovieTitle', state.settings.movie_title || '');
@@ -822,6 +853,69 @@
     async function cancelAutoStart() { await fetch('/api/cancel-autostart', { method: 'POST' }); fetchStatus(); }
     async function ejectDrive() { await fetch('/api/eject', { method: 'POST' }); fetchStatus(); }
 
+    async function openRecoveryModal() {
+      const modal = document.getElementById('recoveryModal');
+      modal.style.display = 'flex';
+      const listEl = document.getElementById('recoveryDirList');
+      listEl.innerHTML = '<div style="color: var(--text-muted); font-size: 0.78rem;">Scanning for raw files...</div>';
+      try {
+        const res = await fetch('/api/raw-dirs');
+        const data = await res.json();
+        if (!data.dirs || data.dirs.length === 0) {
+          listEl.innerHTML = '<div style="color: var(--text-muted); font-size: 0.78rem;">No raw MKV files found in temp directory.</div>';
+          return;
+        }
+        listEl.innerHTML = '';
+        for (const dir of data.dirs) {
+          const item = document.createElement('div');
+          item.style.cssText = 'background: var(--input-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.6rem 0.8rem; display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;';
+          const escapedPath = dir.path.replace(/\\/g, '\\\\');
+          item.innerHTML = `
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-size: 0.82rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${dir.label}</div>
+              <div style="font-size: 0.72rem; color: var(--text-muted);">${dir.file_count} MKV files &bull; ${dir.total_gb} GB &bull; <span style="font-family: monospace; font-size: 0.68rem;">${dir.name}</span></div>
+            </div>
+            <button class="btn btn-primary" style="font-size: 0.72rem; padding: 0.3rem 0.65rem; white-space: nowrap;" onclick="queueReencode('${escapedPath}', this)">
+              Queue
+            </button>
+          `;
+          listEl.appendChild(item);
+        }
+      } catch (err) {
+        listEl.innerHTML = '<div style="color: var(--accent-rose); font-size: 0.78rem;">Error scanning raw directories.</div>';
+      }
+    }
+
+    function closeRecoveryModal() {
+      document.getElementById('recoveryModal').style.display = 'none';
+    }
+
+    async function queueReencode(rawDir, btn) {
+      btn.disabled = true;
+      btn.innerText = 'Queuing...';
+      try {
+        const res = await fetch('/api/reencode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raw_dir: rawDir })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          btn.innerText = 'Queued!';
+          btn.style.background = 'var(--accent-emerald)';
+          fetchStatus();
+        } else {
+          btn.innerText = data.message || 'Error';
+          btn.style.background = 'var(--accent-rose)';
+          btn.disabled = false;
+        }
+      } catch (err) {
+        btn.innerText = 'Error';
+        btn.style.background = 'var(--accent-rose)';
+        btn.disabled = false;
+      }
+    }
+
     async function saveSettings() {
       const payload = {
         media_type: document.getElementById('settingMediaType').value,
@@ -840,8 +934,9 @@
     }
 
     document.addEventListener('DOMContentLoaded', fetchStatus);
-    setInterval(fetchStatus, 1500);
+    setInterval(fetchStatus, 1000);
     fetchStatus();
   </script>
+
 </body>
 </html>
