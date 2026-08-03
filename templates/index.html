@@ -10,6 +10,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- ZXing barcode decoder: fallback for browsers without native BarcodeDetector support -->
+  <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
   
   <style>
     :root {
@@ -591,6 +593,7 @@
 
     let webcamStream = null;
     let webcamAnimFrame = null;
+    let zxingControls = null;
 
     async function lookupBarcode(upcValue) {
       const upc = upcValue || document.getElementById('barcodeInput').value.trim();
@@ -628,7 +631,7 @@
       const status = document.getElementById('webcamStatus');
 
       try {
-        webcamStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        webcamStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
         video.srcObject = webcamStream;
         status.innerText = 'Camera Active! Place barcode inside box.';
         status.style.color = 'var(--accent-cyan)';
@@ -652,6 +655,29 @@
             webcamAnimFrame = requestAnimationFrame(scanFrame);
           };
           scanFrame();
+        } else if (typeof ZXing !== 'undefined') {
+          // Native BarcodeDetector isn't available in this browser — fall
+          // back to the ZXing JS decoder so scanning still works.
+          status.innerText = 'Camera active (ZXing fallback). Place barcode inside box.';
+          const hints = new Map();
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
+            ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.CODE_128
+          ]);
+          const codeReader = new ZXing.BrowserMultiFormatReader(hints);
+          codeReader.decodeFromVideoElement(video, (result, err, controls) => {
+            zxingControls = controls;
+            if (result) {
+              const code = result.getText();
+              status.innerText = `Scanned: ${code}! Fetching...`;
+              status.style.color = 'var(--accent-emerald)';
+              document.getElementById('barcodeInput').value = code;
+              closeWebcamScanner();
+              lookupBarcode(code);
+            }
+            // NotFoundException fires on every frame with no barcode in
+            // view — that's expected continuous-scan behavior, not an error.
+          });
         } else {
           status.innerText = 'Camera active. Point barcode at screen or enter UPC manually.';
         }
@@ -664,6 +690,10 @@
     function closeWebcamScanner() {
       document.getElementById('webcamModal').style.display = 'none';
       if (webcamAnimFrame) cancelAnimationFrame(webcamAnimFrame);
+      if (zxingControls) {
+        zxingControls.stop();
+        zxingControls = null;
+      }
       if (webcamStream) {
         webcamStream.getTracks().forEach(t => t.stop());
         webcamStream = null;

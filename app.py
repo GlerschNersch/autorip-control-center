@@ -10,7 +10,39 @@ import csv
 import io
 import urllib.request
 import urllib.parse
+import difflib
+import ctypes
+import re
 from flask import Flask, render_template, jsonify, request
+
+NO_WINDOW_FLAG = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+
+def get_volume_label(drive_letter):
+    """Retrieve drive volume label using native Win32 C API without spawning console windows."""
+    try:
+        drive = f"{drive_letter.upper()}:\\"
+        volume_name_buffer = ctypes.create_unicode_buffer(1024)
+        file_system_name_buffer = ctypes.create_unicode_buffer(1024)
+        serial_number = ctypes.c_ulong()
+        max_component_length = ctypes.c_ulong()
+        file_system_flags = ctypes.c_ulong()
+        
+        rc = ctypes.windll.kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(drive),
+            volume_name_buffer,
+            ctypes.sizeof(volume_name_buffer),
+            ctypes.byref(serial_number),
+            ctypes.byref(max_component_length),
+            ctypes.byref(file_system_flags),
+            file_system_name_buffer,
+            ctypes.sizeof(file_system_name_buffer)
+        )
+        if rc:
+            return volume_name_buffer.value
+    except Exception:
+        pass
+    return ""
+
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -18,8 +50,47 @@ app.jinja_env.auto_reload = True
 
 
 # --- Configuration & Paths ---
-MAKEMKV_PATH = r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
-HANDBRAKE_PATH = r"C:\Program Files\HandBrake\HandBrakeCLI.exe"
+def resolve_tool_path(configured_path, exe_name, extra_search_roots):
+    """Verify a configured tool path exists; if not, search common install
+    locations for it. Returns (path_or_None, found_via_fallback: bool)."""
+    if configured_path and os.path.isfile(configured_path):
+        return configured_path, False
+
+    search_roots = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages"),
+        r"C:\Program Files",
+        r"C:\Program Files (x86)",
+    ] + extra_search_roots
+
+    for root in search_roots:
+        if not os.path.isdir(root):
+            continue
+        pattern = os.path.join(root, "**", exe_name)
+        matches = glob.glob(pattern, recursive=True)
+        if matches:
+            return matches[0], True
+
+    return None, False
+
+MAKEMKV_PATH_CONFIGURED = r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
+HANDBRAKE_PATH_CONFIGURED = r"C:\Users\matt\AppData\Local\Microsoft\WinGet\Packages\HandBrake.HandBrake.CLI_Microsoft.Winget.Source_8wekyb3d8bbwe\HandBrakeCLI.exe"
+
+MAKEMKV_PATH, _makemkv_fallback = resolve_tool_path(MAKEMKV_PATH_CONFIGURED, "makemkvcon64.exe", [])
+HANDBRAKE_PATH, _handbrake_fallback = resolve_tool_path(HANDBRAKE_PATH_CONFIGURED, "HandBrakeCLI.exe", [])
+FFPROBE_PATH, _ = resolve_tool_path(None, "ffprobe.exe", [])
+
+TOOL_CONFIG_ERRORS = []
+if MAKEMKV_PATH is None:
+    TOOL_CONFIG_ERRORS.append("MakeMKV (makemkvcon64.exe) was not found at the configured path or in common install locations. Ripping will fail until this is fixed.")
+elif _makemkv_fallback:
+    TOOL_CONFIG_ERRORS.append(f"MakeMKV was not found at the configured path — auto-detected fallback at '{MAKEMKV_PATH}' instead. Consider updating MAKEMKV_PATH_CONFIGURED.")
+if HANDBRAKE_PATH is None:
+    TOOL_CONFIG_ERRORS.append("HandBrakeCLI.exe was not found at the configured path or in common install locations. Encoding will fail until this is fixed.")
+elif _handbrake_fallback:
+    TOOL_CONFIG_ERRORS.append(f"HandBrakeCLI was not found at the configured path — auto-detected fallback at '{HANDBRAKE_PATH}' instead. Consider updating HANDBRAKE_PATH_CONFIGURED.")
+if FFPROBE_PATH is None:
+    TOOL_CONFIG_ERRORS.append("ffprobe.exe was not found — duration-based outlier detection for the Recover feature will be disabled (falls back to including everything).")
+
 PS3_DUMPER_PATH = r"C:\Tools\ps3-disc-dumper\ps3-disc-dumper.exe"
 TEMP_RAW_DIR = r"C:\AutoRipTemp\Raw"
 TEMP_ENCODED_DIR = r"C:\AutoRipTemp\Encoded"
@@ -59,7 +130,7 @@ state = {
         "media_type": "tv",       # tv or movie
         "format": "mp4",          # mp4 or mkv
         "preset": "Auto",         # Auto, HQ 720p30 Surround, HQ 1080p30 Surround, NVENC H.264, NVENC H.265, Intel QSV, AMD VCE
-        "min_length_sec": 300,
+        "min_length_sec": 600,  # 10 min — raised from 5 to cut down on junk short titles (recaps/previews) at the source; the duration-outlier filter is the primary defense
         "auto_eject": True,
         "auto_rename": True,
 
@@ -75,12 +146,48 @@ state = {
     }
 }
 
+state_lock = threading.RLock()
+history_lock = threading.Lock()
 rip_lock = threading.Lock()       # one disc ripped at a time (optical drive)
 encode_lock = threading.Lock()    # one encode/transfer job at a time (CPU/GPU)
 process_lock = rip_lock           # legacy alias used by /api/start
 encode_queue = []
 encode_queue_lock = threading.Lock()
 countdown_cancel_event = threading.Event()
+
+LAST_NAS_CHECK = 0
+
+def request_nas_cache_refresh():
+    global LAST_NAS_CHECK
+    LAST_NAS_CHECK = 0
+
+def detect_hardware_encoders():
+    detected = []
+    if HANDBRAKE_PATH and os.path.exists(HANDBRAKE_PATH):
+        try:
+            out = subprocess.check_output([HANDBRAKE_PATH, "--help"], text=True, stderr=subprocess.STDOUT, timeout=10, creationflags=NO_WINDOW_FLAG)
+            out_lower = out.lower()
+            if "nvenc_h264" in out_lower or "nvenc" in out_lower:
+                detected.append("NVENC H.264")
+            if "nvenc_h265" in out_lower or "nvenc" in out_lower:
+                detected.append("NVENC H.265")
+            if "qsv_h264" in out_lower or "qsv" in out_lower:
+                detected.append("Intel QSV")
+            if "vce_h264" in out_lower or "vce" in out_lower:
+                detected.append("AMD VCE")
+        except Exception:
+            pass
+    with state_lock:
+        state["detected_encoders"] = detected
+        if detected and state["settings"]["preset"] == "Auto":
+            if "NVENC H.264" in detected:
+                state["settings"]["preset"] = "NVIDIA NVENC H.264"
+            elif "Intel QSV" in detected:
+                state["settings"]["preset"] = "Intel QSV"
+    if detected:
+        add_log(f"[Startup] Hardware GPU Encoders Active: {', '.join(detected)}")
+    else:
+        add_log("[Startup] Software CPU Encoding active (No GPU hardware encoder detected).")
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -92,22 +199,31 @@ def load_history():
     return []
 
 def save_history_entry(entry):
-    history = load_history()
-    history.insert(0, entry)
-    history = history[:50]
-    try:
-        with open(HISTORY_FILE, "w") as f:
-            json.dump(history, f, indent=2)
-    except Exception as e:
-        add_log(f"Error saving history: {e}")
+    with history_lock:
+        history = load_history()
+        history.insert(0, entry)
+        history = history[:50]
+        try:
+            temp_file = f"{HISTORY_FILE}.tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
+            os.replace(temp_file, HISTORY_FILE)
+        except Exception as e:
+            add_log(f"Error saving history: {e}")
 
 def add_log(msg):
     timestamp = time.strftime("[%H:%M:%S]")
     entry = f"{timestamp} {msg}"
     print(entry, flush=True)
-    state["logs"].append(entry)
-    if len(state["logs"]) > 300:
-        state["logs"].pop(0)
+    with state_lock:
+        state["logs"].append(entry)
+        if len(state["logs"]) > 300:
+            state["logs"].pop(0)
+
+for _tool_error in TOOL_CONFIG_ERRORS:
+    add_log(f"[STARTUP WARNING] {_tool_error}")
+
+detect_hardware_encoders()
 
 def fetch_media_artwork():
     try:
@@ -122,34 +238,85 @@ def fetch_media_artwork():
             if data and "summary" in data and data["summary"]:
                 summary = data["summary"].replace("<p>", "").replace("</p>", "").replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
                 state["media_summary"] = summary
+            if not data:
+                add_log(f"[Artwork] TVMaze had no match for '{query}' — poster/summary left unchanged.")
         else:
             query = state["settings"]["movie_title"]
-            url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=movie&limit=1"
-            req = urllib.request.urlopen(url, timeout=3)
+            found = False
+            try:
+                url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=movie&limit=1"
+                req = urllib.request.urlopen(url, timeout=3)
+                data = json.loads(req.read().decode())
+                if data and "results" in data and len(data["results"]) > 0:
+                    item = data["results"][0]
+                    if "artworkUrl100" in item:
+                        state["artwork_url"] = item["artworkUrl100"].replace("100x100bb", "600x600bb")
+                    if "longDescription" in item:
+                        state["media_summary"] = item["longDescription"]
+                    found = True
+            except Exception:
+                pass
+
+            if not found:
+                try:
+                    wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(query)}"
+                    w_req = urllib.request.Request(wiki_url, headers={"User-Agent": "AutoRipControlCenter/1.0"})
+                    w_data = json.loads(urllib.request.urlopen(w_req, timeout=4).read())
+                    if w_data.get("thumbnail", {}).get("source"):
+                        state["artwork_url"] = w_data["thumbnail"]["source"]
+                    if w_data.get("extract"):
+                        state["media_summary"] = w_data["extract"]
+                    add_log(f"[Artwork] Retrieved poster and summary from Wikipedia for '{query}'")
+                except Exception:
+                    add_log(f"[Artwork] Search had no match for '{query}' — poster/summary left unchanged.")
+    except Exception as e:
+        add_log(f"[Artwork] Fetch failed: {e}")
+
+def fetch_episode_title(show_name, season_num, ep_num):
+    def sanitize_title(name):
+        for char in r'/\:*?"<>|':
+            name = name.replace(char, "")
+        return name.strip()
+
+    # Clean show name for search (remove parenthetical years or tags)
+    clean_show = re.sub(r'\s*\([^)]*\)', '', show_name).strip() if 're' in sys.modules else show_name
+    queries = [show_name]
+    if clean_show and clean_show != show_name:
+        queries.append(clean_show)
+
+    for q in queries:
+        try:
+            url = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(q)}&embed=episodes"
+            req = urllib.request.urlopen(url, timeout=4)
             data = json.loads(req.read().decode())
-            if data and "results" in data and len(data["results"]) > 0:
-                item = data["results"][0]
-                if "artworkUrl100" in item:
-                    state["artwork_url"] = item["artworkUrl100"].replace("100x100bb", "600x600bb")
-                if "longDescription" in item:
-                    state["media_summary"] = item["longDescription"]
+            episodes = data.get("_embedded", {}).get("episodes", [])
+            for ep in episodes:
+                if ep.get("season") == int(season_num) and ep.get("number") == int(ep_num):
+                    ep_name = ep.get("name", "")
+                    if ep_name:
+                        return sanitize_title(ep_name)
+        except Exception:
+            pass
+
+    # Fallback to search endpoint if single search failed
+    try:
+        url = f"https://api.tvmaze.com/search/shows?q={urllib.parse.quote(clean_show or show_name)}"
+        req = urllib.request.urlopen(url, timeout=4)
+        shows = json.loads(req.read().decode())
+        if shows:
+            show_id = shows[0].get("show", {}).get("id")
+            if show_id:
+                ep_url = f"https://api.tvmaze.com/shows/{show_id}/episodes"
+                ep_req = urllib.request.urlopen(ep_url, timeout=4)
+                episodes = json.loads(ep_req.read().decode())
+                for ep in episodes:
+                    if ep.get("season") == int(season_num) and ep.get("number") == int(ep_num):
+                        ep_name = ep.get("name", "")
+                        if ep_name:
+                            return sanitize_title(ep_name)
     except Exception:
         pass
 
-def fetch_episode_title(show_name, season_num, ep_num):
-    try:
-        url = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(show_name)}&embed=episodes"
-        req = urllib.request.urlopen(url, timeout=4)
-        data = json.loads(req.read().decode())
-        episodes = data.get("_embedded", {}).get("episodes", [])
-        for ep in episodes:
-            if ep.get("season") == int(season_num) and ep.get("number") == int(ep_num):
-                name = ep.get("name", "")
-                for char in r'/\:*?"<>|':
-                    name = name.replace(char, "")
-                return name.strip()
-    except Exception:
-        pass
     return ""
 
 def send_discord_notification(title, description, poster_url=None, fields=None):
@@ -173,6 +340,32 @@ def send_discord_notification(title, description, poster_url=None, fields=None):
         add_log("[Discord] Sent Discord webhook notification embed successfully!")
     except Exception as e:
         add_log(f"[Discord] Webhook notification failed: {e}")
+
+def normalize_media_folder_name(name):
+    n = name.strip().lower()
+    for prefix in ("the ", "a ", "an "):
+        if n.startswith(prefix):
+            n = n[len(prefix):]
+            break
+    return " ".join(n.split())
+
+
+def find_existing_media_folder(root_dir, proposed_name):
+    """Match a proposed show/movie folder name against existing folders in
+    root_dir, ignoring case and a leading 'The '/'A '/'An ' — prevents stray
+    duplicate folders (e.g. 'Legend of Korra' vs 'The Legend of Korra') when
+    show_name drifts slightly between rips or app restarts."""
+    try:
+        existing = os.listdir(root_dir)
+    except Exception:
+        return proposed_name
+    target_norm = normalize_media_folder_name(proposed_name)
+    for name in existing:
+        full = os.path.join(root_dir, name)
+        if os.path.isdir(full) and normalize_media_folder_name(name) == target_norm:
+            return name
+    return proposed_name
+
 
 def check_nas_storage():
     try:
@@ -204,6 +397,72 @@ DBZ_MOVIES = {
     "DRAGON_BALL_Z_MOVIE_13": ("Dragon Ball Z: Wrath of the Dragon", "1995"),
 }
 
+AUTO_DETECT_MATCH_THRESHOLD = 0.5
+
+
+def _label_match_score(query, candidate_name):
+    if not candidate_name:
+        return 0.0
+    q_low = query.lower().strip()
+    c_low = candidate_name.lower().strip()
+    if q_low in c_low or c_low in q_low:
+        return 0.90
+    return difflib.SequenceMatcher(None, q_low, c_low).ratio()
+
+
+def _lookup_tv_candidate(query):
+    try:
+        url = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(query)}"
+        req = urllib.request.urlopen(url, timeout=3)
+        data = json.loads(req.read().decode())
+        if data and "name" in data:
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def _lookup_movie_candidate(query):
+    queries = [query]
+    # Fallback query stripping trailing numbers/subtitle fragments
+    if len(query.split()) > 2:
+        queries.append(" ".join(query.split()[:3]))
+        queries.append(" ".join(query.split()[:2]))
+
+    for q in queries:
+        try:
+            url = f"https://itunes.apple.com/search?term={urllib.parse.quote(q)}&media=movie&limit=5"
+            req = urllib.request.urlopen(url, timeout=4)
+            data = json.loads(req.read().decode())
+            results = data.get("results", [])
+            if results:
+                # Find best match or top movie
+                for r in results:
+                    if r.get("wrapperType") == "track" or r.get("kind") == "feature-movie":
+                        return r
+                return results[0]
+        except Exception:
+            pass
+
+    # Wikipedia fallback search if iTunes catalog misses the title
+    try:
+        search_term = query + " film"
+        wiki_url = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=" + urllib.parse.quote(search_term) + "&format=json"
+        req = urllib.request.Request(wiki_url, headers={"User-Agent": "AutoRipControlCenter/1.0"})
+        data = json.loads(urllib.request.urlopen(req, timeout=4).read())
+        results = data.get("query", {}).get("search", [])
+        if results:
+            title = results[0]["title"].replace(" (film)", "").strip()
+            snip = results[0].get("snippet", "")
+            years = re.findall(r'\b(19\d\d|20\d\d)\b', snip)
+            year = years[0] if years else ""
+            return {"trackName": title, "releaseDate": f"{year}-01-01" if year else ""}
+    except Exception:
+        pass
+
+    return None
+
+
 def parse_disc_label_media(label):
     if not label or label in ["Empty Drive / No Disc", "Ejected", "Drive Error / Empty"]:
         return
@@ -221,58 +480,175 @@ def parse_disc_label_media(label):
 
     # 2. General Clean Query
     clean_label = label.replace("_", " ").replace(".", " ").replace("-", " ")
+    # Strip common format/edition tags (WS, FS, WIDESCREEN, FULLSCREEN, SE, EXTENDED, UNRATED, DIRECTORS_CUT, REMASTERED)
+    clean_label = re.sub(r'\b(?:WS|FS|WIDESCREEN|FULLSCREEN|SE|SPECIAL_EDITION|DIRECTORS_CUT|UNRATED|EXTENDED|REMASTERED)\b', ' ', clean_label, flags=re.IGNORECASE)
+    # Strip disc/part numbers (D1, D2, DISC1, CD1, PART1, etc.)
+    clean_label = re.sub(r'\b(?:D|DISC|CD|PART|PT|VOL|VOLUME)\d+\b', ' ', clean_label, flags=re.IGNORECASE)
     for word in ["VOLUME", "VOL", "DISC", "SEASON", "DES", "DVD", "BLURAY", "MOVIE", "FEATURE", "SPECIAL", "EDITION"]:
-        clean_label = clean_label.replace(word, " ").replace(word.lower(), " ")
-        
-    query = clean_label.strip()
+        clean_label = re.sub(rf'\b{word}\b', ' ', clean_label, flags=re.IGNORECASE)
+
+    clean_label = re.sub(r'\s+', ' ', clean_label).strip()
+    query = clean_label
     if len(query) < 3:
         return
 
-    try:
-        url = f"https://api.tvmaze.com/singlesearch/shows?q={urllib.parse.quote(query)}"
-        req = urllib.request.urlopen(url, timeout=3)
-        data = json.loads(req.read().decode())
-        if data and "name" in data:
-            state["settings"]["media_type"] = "tv"
-            state["settings"]["show_name"] = data["name"]
-            if "premiered" in data and data["premiered"]:
-                state["settings"]["release_year"] = data["premiered"].split("-")[0]
-            add_log(f"[Auto-Detect] Recognized disc as TV Show: '{data['name']}' ({state['settings']['release_year']})")
-            fetch_media_artwork()
-            return
-    except Exception:
-        pass
+    # 3. Query both TVMaze and iTunes and score each match against the
+    # cleaned label, instead of committing to TV on any hit — a movie whose
+    # label loosely matches an unrelated show would otherwise get
+    # misclassified before movie search is ever tried.
+    tv_candidate = _lookup_tv_candidate(query)
+    movie_candidate = _lookup_movie_candidate(query)
 
+    tv_score = _label_match_score(query, tv_candidate.get("name")) if tv_candidate else 0.0
+    movie_score = _label_match_score(query, movie_candidate.get("trackName")) if movie_candidate else 0.0
+
+    if tv_score < AUTO_DETECT_MATCH_THRESHOLD and movie_score < AUTO_DETECT_MATCH_THRESHOLD:
+        add_log(f"[Auto-Detect] No confident match for '{query}' (best TV={tv_score:.2f}, movie={movie_score:.2f}) — leaving media type/title as-is, set manually if needed.")
+        return
+
+    if tv_score >= movie_score:
+        state["settings"]["media_type"] = "tv"
+        state["settings"]["show_name"] = tv_candidate["name"]
+        if tv_candidate.get("premiered"):
+            state["settings"]["release_year"] = tv_candidate["premiered"].split("-")[0]
+        add_log(f"[Auto-Detect] Recognized disc as TV Show: '{tv_candidate['name']}' ({state['settings']['release_year']}) [match={tv_score:.2f}]")
+    else:
+        state["settings"]["media_type"] = "movie"
+        state["settings"]["movie_title"] = movie_candidate.get("trackName", query)
+        if movie_candidate.get("releaseDate"):
+            state["settings"]["release_year"] = movie_candidate["releaseDate"].split("-")[0]
+        add_log(f"[Auto-Detect] Recognized disc as Movie: '{state['settings']['movie_title']}' ({state['settings']['release_year']}) [match={movie_score:.2f}]")
+
+    fetch_media_artwork()
+
+
+def parse_makemkv_duration_to_seconds(duration_str):
     try:
-        url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=movie&limit=1"
-        req = urllib.request.urlopen(url, timeout=3)
-        data = json.loads(req.read().decode())
-        if data and "results" in data and len(data["results"]) > 0:
-            item = data["results"][0]
-            state["settings"]["media_type"] = "movie"
-            state["settings"]["movie_title"] = item.get("trackName", query)
-            if "releaseDate" in item:
-                state["settings"]["release_year"] = item["releaseDate"].split("-")[0]
-            add_log(f"[Auto-Detect] Recognized disc as Movie: '{state['settings']['movie_title']}' ({state['settings']['release_year']})")
-            fetch_media_artwork()
+        parts = [int(p) for p in duration_str.strip().split(":")]
+        if len(parts) == 3:
+            h, m, s = parts
+            return h * 3600 + m * 60 + s
+        elif len(parts) == 2:
+            m, s = parts
+            return m * 60 + s
+        return None
     except Exception:
-        pass
+        return None
+
+
+def _classify_files_by_duration(raw_files, file_durations):
+    """Shared outlier logic. file_durations is a possibly-partial
+    {file_path: seconds} map; files without a known duration are included
+    in the normal set by default (no penalty for missing data). Needs at
+    least 3 known durations to compute a meaningful median.
+    Returns (normal_files, outlier_files_with_duration, insufficient_data)."""
+    durations = list(file_durations.values())
+    if len(durations) < 3:
+        return raw_files, [], True
+
+    sorted_durs = sorted(durations)
+    n = len(sorted_durs)
+    median = sorted_durs[n // 2] if n % 2 else (sorted_durs[n // 2 - 1] + sorted_durs[n // 2]) / 2
+    if median <= 0:
+        return raw_files, [], True
+
+    normal, outliers = [], []
+    for f in raw_files:
+        dur = file_durations.get(f)
+        if dur is None:
+            normal.append(f)
+        elif dur < 0.5 * median or dur > 1.8 * median:
+            outliers.append((f, dur))
+        else:
+            normal.append(f)
+
+    return normal, outliers, False
+
+
+def classify_titles_by_duration(raw_files, title_durations):
+    """Live-rip classification using MakeMKV's own MSG:3028 durations,
+    index-matched to each ripped file via its _tNN filename suffix. Catches
+    'play-all' compilations (way longer than a real episode) and
+    recap/preview snippets (way shorter) that MakeMKV otherwise includes as
+    if they were single episodes — the old logic only ever dropped whichever
+    track came first, which missed compilations/snippets at other positions."""
+    file_durations = {}
+    for f in raw_files:
+        base = os.path.basename(f)
+        if "_t" in base:
+            idx_str = base.rsplit("_t", 1)[1].split(".")[0]
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                continue
+            if idx in title_durations:
+                file_durations[f] = title_durations[idx]
+    return _classify_files_by_duration(raw_files, file_durations)
+
+
+def probe_file_duration_seconds(filepath):
+    if FFPROBE_PATH is None:
+        return None
+    try:
+        out = subprocess.check_output(
+            [FFPROBE_PATH, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filepath],
+            text=True, timeout=30, creationflags=NO_WINDOW_FLAG
+        )
+        return float(out.strip())
+    except Exception:
+        return None
+
+
+def classify_raw_dir_by_duration(raw_files):
+    """Recovery-path classification (e.g. /api/reencode) for standalone raw
+    folders where no live MakeMKV duration data exists — probes each file
+    directly with ffprobe instead."""
+    if FFPROBE_PATH is None:
+        return raw_files, [], True
+    file_durations = {}
+    for f in raw_files:
+        dur = probe_file_duration_seconds(f)
+        if dur is not None:
+            file_durations[f] = dur
+    return _classify_files_by_duration(raw_files, file_durations)
+
+
+def is_makemkv_process_running():
+    """Detect an actual makemkvcon64.exe RIP already running (e.g. an
+    orphaned rip from a previous crashed/restarted instance, or a second app
+    instance) — prevents two rip processes fighting over the same optical
+    drive, which corrupts both. Must check the command line, not just the
+    image name: MakeMKV keeps a persistent 'guiserver' helper process
+    (makemkvcon64.exe with no rip arguments) running at all times, which
+    would otherwise false-positive on every single rip attempt."""
+    try:
+        ps_cmd = (
+            "Get-CimInstance Win32_Process -Filter \"Name='makemkvcon64.exe'\" "
+            "| Select-Object -ExpandProperty CommandLine"
+        )
+        out = subprocess.check_output(["powershell", "-Command", ps_cmd], text=True, timeout=8, creationflags=NO_WINDOW_FLAG)
+        for line in out.splitlines():
+            line_lower = line.lower()
+            if "-r" in line_lower and "disc:" in line_lower:
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def check_drive_status():
-    if rip_lock.locked() or state["stage"] in ["COUNTDOWN", "RIPPING"]:
-        return
-
     drive = state["drive_letter"][0]
     if not drive.isalpha():
         add_log(f"Invalid drive letter '{drive}' — skipping drive check.")
         return
 
     previous_disc_present = state["disc_present"]
+    previous_label = state["disc_label"]
     try:
-        cmd = f"(Get-Volume -DriveLetter '{drive}' -ErrorAction SilentlyContinue).FileSystemLabel"
-        output = subprocess.check_output(["powershell", "-Command", cmd], text=True).strip()
+        output = get_volume_label(drive).strip()
         if output:
+            is_new_disc = (not previous_disc_present) or (output != previous_label and previous_label not in ["Empty Drive / No Disc", "Ejected", "Drive Error / Empty"])
+            
             state["disc_label"] = output
             state["disc_present"] = True
             
@@ -281,8 +657,11 @@ def check_drive_status():
             else:
                 state["disc_type"] = "DVD"
                 
-            if not previous_disc_present:
+            if is_new_disc:
+                add_log(f"[Drive D:] New disc inserted: '{output}'")
                 threading.Thread(target=parse_disc_label_media, args=(output,), daemon=True).start()
+                if state["auto_start_enabled"] and not rip_lock.locked() and state["stage"] not in ["COUNTDOWN", "RIPPING"]:
+                    trigger_auto_start_countdown()
         else:
             state["disc_label"] = "Empty Drive / No Disc"
             state["disc_present"] = False
@@ -291,10 +670,6 @@ def check_drive_status():
         state["disc_label"] = "Drive Error / Empty"
         state["disc_present"] = False
         state["disc_type"] = "Unknown"
-
-
-    if not previous_disc_present and state["disc_present"] and state["auto_start_enabled"] and not rip_lock.locked() and state["stage"] not in ["COUNTDOWN", "RIPPING"]:
-        trigger_auto_start_countdown()
 
 def trigger_auto_start_countdown():
     if rip_lock.locked() or state["stage"] in ["COUNTDOWN", "RIPPING"]:
@@ -346,10 +721,27 @@ def run_autorip_pipeline():
 
     state["start_timestamp"] = int(time.time())
     try:
+        if MAKEMKV_PATH is None:
+            add_log("Cannot start rip: MakeMKV (makemkvcon64.exe) was not found. Check the STARTUP WARNING in the log.")
+            state["stage"] = "ERROR"
+            state["status_message"] = "MakeMKV not found — check config"
+            state["start_timestamp"] = 0
+            return
+
+        if is_makemkv_process_running():
+            add_log("Cannot start rip: a makemkvcon64.exe process is already running (likely an orphaned rip from a previous session, or a second app instance). Starting a second rip against the same drive corrupts both. Let it finish, then use Recover on its raw folder if needed.")
+            state["stage"] = "ERROR"
+            state["status_message"] = "Another MakeMKV rip is already running — see log"
+            state["start_timestamp"] = 0
+            return
+
         os.makedirs(TEMP_RAW_DIR, exist_ok=True)
         os.makedirs(TEMP_ENCODED_DIR, exist_ok=True)
 
-        state["logs"] = [f"{time.strftime('[%H:%M:%S]')} === Starting AutoRip Pipeline ==="]
+        # Append rather than replace — a full reset here would silently
+        # discard the auto-detect confirmation logged during the countdown
+        # phase (parse_disc_label_media runs well before this point).
+        add_log("=== Starting AutoRip Pipeline ===")
 
         for attempt in range(1, 4):
             check_drive_status()
@@ -377,7 +769,7 @@ def run_autorip_pipeline():
             os.makedirs(ps3_out_dir, exist_ok=True)
 
             cmd_ps3 = [PS3_DUMPER_PATH]
-            p_ps3 = subprocess.Popen(cmd_ps3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=r"C:\Tools\ps3-disc-dumper")
+            p_ps3 = subprocess.Popen(cmd_ps3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=r"C:\Tools\ps3-disc-dumper", creationflags=NO_WINDOW_FLAG)
             for line in p_ps3.stdout:
                 line_str = line.strip()
                 if line_str:
@@ -404,7 +796,7 @@ def run_autorip_pipeline():
             )
 
             if state["settings"]["auto_eject"]:
-                subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
+                subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True, creationflags=NO_WINDOW_FLAG)
             return
 
         if media_type == "movie":
@@ -413,7 +805,10 @@ def run_autorip_pipeline():
             min_sec = state["settings"]["min_length_sec"]
 
         preset = state["settings"]["preset"]
-        add_log(f"Media Type: {media_type.upper()} | Disc Type: {state['disc_type']} | Preset/Encoder: {preset}")
+        # Read media_type fresh here rather than the value captured before
+        # the 10-second auto-start countdown — auto-detect may have
+        # corrected it since, and this log line renders after that delay.
+        add_log(f"Media Type: {state['settings']['media_type'].upper()} | Disc Type: {state['disc_type']} | Preset/Encoder: {preset}")
 
         fetch_media_artwork()
 
@@ -434,7 +829,9 @@ def run_autorip_pipeline():
             f"--minlength={min_sec}"
         ]
 
-        p_rip = subprocess.Popen(cmd_rip, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        title_durations = {}  # {title_num: duration_seconds}, used for compilation/snippet filtering below
+
+        p_rip = subprocess.Popen(cmd_rip, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=NO_WINDOW_FLAG)
         for line in p_rip.stdout:
             line_str = line.strip()
             if "PRGV:" in line_str:
@@ -448,6 +845,19 @@ def run_autorip_pipeline():
                             state["progress_pct"] = min(rip_pct, 48)
                 except Exception:
                     pass
+            elif "CINFO:2,0," in line_str or "CINFO:32,0," in line_str or "MSG:3000" in line_str:
+                try:
+                    fields = next(csv.reader(io.StringIO(line_str)))
+                    for item_val in fields:
+                        clean_val = item_val.strip('"\' ')
+                        if len(clean_val) > 3 and clean_val.upper() not in ["VOLUME_ID", "DVD_VIDEO", "BDMV", "DISC1", "UNKNOWN", "TITLE"]:
+                            if state["disc_label"] in ["VOLUME_ID", "Empty Drive / No Disc", "No Disc Detected", "DVD_VIDEO", "BDMV"]:
+                                state["disc_label"] = clean_val
+                                add_log(f"[MakeMKV] Extracted internal disc title header: '{clean_val}'")
+                                threading.Thread(target=parse_disc_label_media, args=(clean_val,), daemon=True).start()
+                            break
+                except Exception:
+                    pass
             elif "MSG:3028" in line_str:
                 try:
                     fields = next(csv.reader(io.StringIO(line_str)))
@@ -455,6 +865,9 @@ def run_autorip_pipeline():
                     title_num = fields[5].strip() if len(fields) > 5 else "?"
                     duration = fields[7].strip() if len(fields) > 7 else "unknown"
                     add_log(f"[MakeMKV] Title #{title_num} found (Duration: {duration})")
+                    dur_sec = parse_makemkv_duration_to_seconds(duration)
+                    if dur_sec is not None and title_num.isdigit():
+                        title_durations[int(title_num)] = dur_sec
                 except Exception:
                     pass
             elif "MSG:5014" in line_str:
@@ -487,9 +900,34 @@ def run_autorip_pipeline():
             state["progress_pct"] = 0
             return
 
-        if media_type == "tv" and state["settings"]["auto_rename"] and len(raw_files) > 1:
-            add_log("Auto-Rename: Filtered out play-all compilation title track.")
-            target_files = raw_files[1:]
+        # Drive-label heuristics can mislabel Blu-rays as DVD; a real DVD
+        # tops out around 8.5GB (dual-layer), so anything bigger flags a
+        # misdetection that would otherwise pick the wrong "Auto" preset.
+        total_extracted_gb = sum(os.path.getsize(f) for f in raw_files) / (1024 ** 3)
+        if state["disc_type"] == "DVD" and total_extracted_gb > 8.5:
+            add_log(f"[Disc Type] {round(total_extracted_gb, 1)}GB extracted exceeds DVD capacity — correcting disc type from DVD to Blu-ray.")
+            state["disc_type"] = "Blu-ray"
+
+        # Re-read media_type fresh here rather than trusting the value
+        # captured at pipeline start — MakeMKV rips can run for a long time,
+        # and if settings get corrected mid-rip (e.g. auto-detect failed on
+        # a generic disc label and got fixed manually), using the stale
+        # value here would wrongly apply TV-only filtering to a movie disc
+        # or vice versa.
+        current_media_type = state["settings"]["media_type"]
+        if current_media_type == "tv" and state["settings"]["auto_rename"] and len(raw_files) > 1:
+            normal_files, outlier_files, insufficient_data = classify_titles_by_duration(raw_files, title_durations)
+            if insufficient_data:
+                add_log("Auto-Rename: Not enough title duration data captured — falling back to dropping the first (likely play-all) track.")
+                target_files = raw_files[1:]
+            else:
+                for f, dur in outlier_files:
+                    mins = round(dur / 60, 1)
+                    add_log(f"[Duration Filter] Excluding '{os.path.basename(f)}' ({mins} min) — unusual length vs. this disc's other titles (likely a play-all compilation or a recap/preview snippet). Left in the raw folder for manual review via Recover.")
+                target_files = normal_files
+                if not target_files:
+                    add_log("[Duration Filter] All titles were flagged as outliers — falling back to including everything to avoid an empty job.")
+                    target_files = raw_files
         else:
             target_files = raw_files
 
@@ -499,7 +937,7 @@ def run_autorip_pipeline():
         if state["settings"]["auto_eject"]:
             add_log("Rip done — ejecting so you can insert the next disc while encoding runs...")
             try:
-                subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
+                subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True, creationflags=NO_WINDOW_FLAG)
                 state["disc_present"] = False
                 state["disc_label"] = "Ejected"
             except Exception as e:
@@ -542,6 +980,13 @@ def run_encode_transfer_stage(job):
     fmt = settings["format"]
     preset = settings["preset"]
 
+    if HANDBRAKE_PATH is None:
+        add_log("Cannot encode: HandBrakeCLI.exe was not found. Check the STARTUP WARNING in the log. Raw files left in place for later recovery.")
+        if not rip_lock.locked():
+            state["stage"] = "ERROR"
+            state["status_message"] = "HandBrakeCLI not found — check config"
+        return
+
     start_time = time.time()
 
     def set_stage(stage, msg=None):
@@ -578,7 +1023,22 @@ def run_encode_transfer_stage(job):
 
             if settings["auto_rename"]:
                 if media_type == "movie":
-                    target_filename = f"{movie_title} ({year}).{fmt}" if len(raw_files) == 1 else f"{movie_title} ({year}) - Part {idx:02d}.{fmt}"
+                    if len(raw_files) == 1:
+                        target_filename = f"{movie_title} ({year}).{fmt}"
+                    else:
+                        # Find the largest raw file (the main feature film)
+                        raw_sizes = {rf: os.path.getsize(rf) if os.path.exists(rf) else 0 for rf in raw_files}
+                        largest_rf = max(raw_files, key=lambda rf: raw_sizes[rf])
+                        largest_size = raw_sizes[largest_rf]
+                        current_size = raw_sizes[raw_file]
+
+                        if raw_file == largest_rf:
+                            target_filename = f"{movie_title} ({year}).{fmt}"
+                        elif largest_size > 0 and abs(current_size - largest_size) / largest_size < 0.08:
+                            add_log(f"[Movie Deduplication] Skipping '{os.path.basename(raw_file)}' — duplicate playlist cut of main feature.")
+                            continue
+                        else:
+                            target_filename = f"Featurettes\\{movie_title} ({year}) - Featurette {idx:02d}.{fmt}"
                 else:
                     ep_num = start_ep + idx - 1
                     ep_name = clean_str(fetch_episode_title(show_name, season, ep_num)) if include_titles else ""
@@ -599,9 +1059,13 @@ def run_encode_transfer_stage(job):
 
             cmd_enc = [HANDBRAKE_PATH, "-i", raw_file, "-o", out_file]
 
-            if "NVENC H.264" in preset:
+            # Prefer English audio track automatically over foreign/Japanese primary tracks.
+            # --audio-lang-list eng,any with --first-audio scans for English audio first.
+            cmd_enc.extend(["--audio-lang-list", "eng,any", "--first-audio", "--native-language", "eng", "--native-dub"])
+
+            if "NVENC H.264" in preset or "NVENC H264" in preset:
                 cmd_enc.extend(["--encoder", "nvenc_h264", "--quality", "20", "--encoder-preset", "fast"])
-            elif "NVENC H.265" in preset:
+            elif "NVENC H.265" in preset or "NVENC HEVC" in preset:
                 cmd_enc.extend(["--encoder", "nvenc_h265", "--quality", "22", "--encoder-preset", "fast"])
             elif "Intel QSV" in preset:
                 cmd_enc.extend(["--encoder", "qsv_h264", "--quality", "20"])
@@ -611,7 +1075,7 @@ def run_encode_transfer_stage(job):
                 preset_arg = preset if preset != "Auto" else ("HQ 1080p30 Surround" if disc_type == "Blu-ray" else "HQ 720p30 Surround")
                 cmd_enc.extend(["--preset", preset_arg])
 
-            p_enc = subprocess.Popen(cmd_enc, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            p_enc = subprocess.Popen(cmd_enc, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=NO_WINDOW_FLAG)
             last_logged_quarter = -1
 
             for line in p_enc.stdout:
@@ -671,9 +1135,17 @@ def run_encode_transfer_stage(job):
 
         if settings["auto_rename"]:
             if media_type == "movie":
-                nas_folder = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
+                proposed = f"{movie_title} ({year})"
+                matched = find_existing_media_folder(DEFAULT_MOVIE_DESTINATION, proposed)
+                if matched != proposed:
+                    add_log(f"[NAS] Matched existing folder '{matched}' instead of creating '{proposed}'.")
+                nas_folder = os.path.join(DEFAULT_MOVIE_DESTINATION, matched)
             else:
-                nas_folder = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
+                proposed = f"{show_name} ({year})"
+                matched = find_existing_media_folder(DEFAULT_TV_DESTINATION, proposed)
+                if matched != proposed:
+                    add_log(f"[NAS] Matched existing folder '{matched}' instead of creating '{proposed}'.")
+                nas_folder = os.path.join(DEFAULT_TV_DESTINATION, matched, f"Season {season:02d}")
         else:
             nas_folder = os.path.join(DEFAULT_TV_DESTINATION, "Uncategorized")
 
@@ -693,9 +1165,23 @@ def run_encode_transfer_stage(job):
             state["settings"]["start_episode"] = new_ep
             add_log(f"Auto-incremented episode counter to S{season:02d}E{new_ep:02d} for next disc!")
 
-        # Clean up per-job raw dir now that encoding is done
+        # Remove only the raw files this job targeted for encoding — any
+        # outlier titles the duration filter left behind (for manual review
+        # via Recover) must survive this cleanup, so we don't rmtree the
+        # whole directory blindly.
+        for rf in raw_files:
+            try:
+                if os.path.exists(rf):
+                    os.remove(rf)
+            except Exception:
+                pass
         try:
-            shutil.rmtree(job_raw_dir, ignore_errors=True)
+            if os.path.isdir(job_raw_dir):
+                remaining = os.listdir(job_raw_dir)
+                if not remaining:
+                    os.rmdir(job_raw_dir)
+                else:
+                    add_log(f"[Cleanup] Left {len(remaining)} unencoded title(s) in '{job_raw_dir}' for review (use Recover to process them).")
         except Exception:
             pass
 
@@ -732,7 +1218,7 @@ def run_encode_transfer_stage(job):
         )
 
         if settings["auto_eject"] and state["disc_present"]:
-            subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
+            subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True, creationflags=NO_WINDOW_FLAG)
             state["disc_present"] = False
             state["disc_label"] = "Ejected"
 
@@ -776,11 +1262,13 @@ def update_nas_files_cache():
         season = state["settings"]["season_number"]
 
         if media_type == "movie":
-            target_nas_dir = os.path.join(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
+            matched = find_existing_media_folder(DEFAULT_MOVIE_DESTINATION, f"{movie_title} ({year})")
+            target_nas_dir = os.path.join(DEFAULT_MOVIE_DESTINATION, matched)
         elif media_type == "ps3":
             target_nas_dir = DEFAULT_PS3_DESTINATION
         else:
-            target_nas_dir = os.path.join(DEFAULT_TV_DESTINATION, f"{show_name} ({year})", f"Season {season:02d}")
+            matched = find_existing_media_folder(DEFAULT_TV_DESTINATION, f"{show_name} ({year})")
+            target_nas_dir = os.path.join(DEFAULT_TV_DESTINATION, matched, f"Season {season:02d}")
 
         if os.path.exists(target_nas_dir):
             files_with_time = []
@@ -798,32 +1286,55 @@ def update_nas_files_cache():
 
 # --- Background Poller ---
 def drive_poller_thread():
+    global LAST_NAS_CHECK
     last_raw_bytes = 0
     last_check_time = time.time()
     while True:
         time.sleep(2.5)
-        check_nas_storage()
-        update_nas_files_cache()
+        now = time.time()
+        if now - LAST_NAS_CHECK >= 30:
+            check_nas_storage()
+            update_nas_files_cache()
+            LAST_NAS_CHECK = now
 
 
-        if state["stage"] == "RIPPING":
-            raw_dir = state["current_raw_dir"] or TEMP_RAW_DIR
-            if os.path.exists(raw_dir):
-                total_bytes = sum(os.path.getsize(os.path.join(raw_dir, f)) for f in os.listdir(raw_dir) if os.path.isfile(os.path.join(raw_dir, f)))
-                now = time.time()
-                dt = now - last_check_time
-                if dt > 0 and last_raw_bytes > 0:
-                    mb_s = round(((total_bytes - last_raw_bytes) / (1024 * 1024)) / dt, 1)
-                    if mb_s >= 0:
-                        state["fps"] = f"{mb_s} MB/s"
-                last_raw_bytes = total_bytes
-                last_check_time = now
-                total_mb = round(total_bytes / (1024 * 1024), 1)
-                if total_mb > 0:
-                    state["status_message"] = f"MakeMKV Extracting Disc Data ({total_mb} MB total extracted)..."
+        is_ripping_active = is_makemkv_process_running() or state["stage"] == "RIPPING"
+        if is_ripping_active:
+            with state_lock:
+                if state["stage"] != "RIPPING":
+                    state["stage"] = "RIPPING"
+                    state["disc_present"] = True
+
+                raw_dir = state["current_raw_dir"]
+                if not raw_dir or not os.path.exists(raw_dir):
+                    job_dirs = glob.glob(os.path.join(TEMP_RAW_DIR, "job_*"))
+                    if job_dirs:
+                        raw_dir = max(job_dirs, key=os.path.getmtime)
+                        state["current_raw_dir"] = raw_dir
+                    else:
+                        raw_dir = TEMP_RAW_DIR
+
+                if os.path.exists(raw_dir):
+                    total_bytes = sum(os.path.getsize(os.path.join(raw_dir, f)) for f in os.listdir(raw_dir) if os.path.isfile(os.path.join(raw_dir, f)))
+                    now = time.time()
+                    dt = now - last_check_time
+                    if dt > 0 and last_raw_bytes > 0:
+                        mb_s = round(((total_bytes - last_raw_bytes) / (1024 * 1024)) / dt, 1)
+                        if mb_s >= 0:
+                            state["fps"] = f"{mb_s} MB/s"
+                    last_raw_bytes = total_bytes
+                    last_check_time = now
+                    total_mb = round(total_bytes / (1024 * 1024), 1)
+                    if total_mb > 0:
+                        state["status_message"] = f"MakeMKV Extracting Disc Data ({total_mb} MB total extracted)..."
+                        state["progress_pct"] = min(10 + int(total_mb / 500), 48)
 
         check_drive_status()
-        if state["stage"] == "COMPLETE" and not state["disc_present"] and not encode_lock.locked():
+        # A stale COMPLETE/ERROR state (e.g. from an unrelated job that
+        # already finished or failed) shouldn't linger in the header once
+        # the drive is empty and nothing is actively running — the log/
+        # history entries remain as the permanent record either way.
+        if state["stage"] in ("COMPLETE", "ERROR") and not state["disc_present"] and not encode_lock.locked() and not rip_lock.locked():
             state["stage"] = "IDLE"
             state["status_message"] = "System Ready - Insert a disc to begin"
 
@@ -875,7 +1386,7 @@ def cancel_autostart():
 
 @app.route("/api/eject", methods=["POST"])
 def eject_drive():
-    subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True)
+    subprocess.run(["powershell", "-Command", "(New-Object -ComObject WMPlayer.OCX.7).cdromCollection.Item(0).Eject()"], capture_output=True, creationflags=NO_WINDOW_FLAG)
     state["disc_present"] = False
     state["disc_label"] = "Ejected"
     add_log("Drive D: ejected manually.")
@@ -884,17 +1395,19 @@ def eject_drive():
 @app.route("/api/settings", methods=["POST"])
 def update_settings():
     data = request.json or {}
-    for key, val in data.items():
-        if key in ["season_number", "start_episode", "min_length_sec"]:
-            try:
-                state["settings"][key] = int(val)
-            except Exception:
-                pass
-        elif key in ["auto_eject", "auto_rename", "include_episode_titles"]:
-            state["settings"][key] = bool(val)
-        else:
-            state["settings"][key] = str(val)
+    with state_lock:
+        for key, val in data.items():
+            if key in ["season_number", "start_episode", "min_length_sec"]:
+                try:
+                    state["settings"][key] = int(val)
+                except Exception:
+                    pass
+            elif key in ["auto_eject", "auto_rename", "include_episode_titles"]:
+                state["settings"][key] = bool(val)
+            else:
+                state["settings"][key] = str(val)
             
+    request_nas_cache_refresh()
     threading.Thread(target=fetch_media_artwork, daemon=True).start()
     return jsonify({"status": "success", "settings": state["settings"]})
 
@@ -1039,7 +1552,18 @@ def reencode_from_raw():
 
     media_type = state["settings"]["media_type"]
     if media_type == "tv" and state["settings"]["auto_rename"] and len(raw_files) > 1:
-        target_files = raw_files[1:]
+        normal_files, outlier_files, insufficient_data = classify_raw_dir_by_duration(raw_files)
+        if insufficient_data:
+            add_log("[Recovery] Not enough title duration data (ffprobe unavailable or too few titles) — falling back to dropping the first (likely play-all) track.")
+            target_files = raw_files[1:]
+        else:
+            for f, dur in outlier_files:
+                mins = round(dur / 60, 1)
+                add_log(f"[Recovery][Duration Filter] Excluding '{os.path.basename(f)}' ({mins} min) — unusual length vs. this folder's other titles. Left in place for manual review.")
+            target_files = normal_files
+            if not target_files:
+                add_log("[Recovery][Duration Filter] All titles were flagged as outliers — falling back to including everything to avoid an empty job.")
+                target_files = raw_files
     else:
         target_files = raw_files
 
@@ -1062,30 +1586,11 @@ def reencode_from_raw():
 
 
 if __name__ == "__main__":
-    import webview
-
-    def start_server():
-        from waitress import serve
-        serve(app, host="127.0.0.1", port=5000)
-
-    server_thread = threading.Thread(target=start_server, daemon=True)
-    server_thread.start()
-
-    # Poll until the server is ready before opening the window
-    import urllib.error
-    for _ in range(20):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:5000", timeout=1)
-            break
-        except Exception:
-            time.sleep(0.25)
-
-    window = webview.create_window(
-        "AutoRip Control Center",
-        "http://127.0.0.1:5000",
-        width=1280,
-        height=860,
-        resizable=True,
-        min_size=(900, 600),
-    )
-    webview.start()
+    # Runs headless on purpose — access the dashboard via browser at
+    # http://127.0.0.1:5000. A prior version opened a native pywebview
+    # window here, but that tied the entire server's lifetime to the
+    # window: closing it (even accidentally) silently killed the backend,
+    # including any rip/encode in progress. Serving directly on the main
+    # thread with no GUI window removes that failure mode entirely.
+    from waitress import serve
+    serve(app, host="127.0.0.1", port=5000)
